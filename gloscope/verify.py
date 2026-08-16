@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Callable, TypeAlias
@@ -68,7 +69,10 @@ PROMPT_TEMPLATE = """你是一名资深 Web 安全审计专家，正在验证一
 - taint_path: 数组，每项 "path/to/file.py:42 - 该步说明"，confirmed 时必须给出完整链
 - confidence: "high" | "medium" | "low"
 - poc_idea: 如何构造请求验证（无则空字符串）
-- explanation: 结论依据（可达性、净化情况等）"""
+- explanation: 结论依据（可达性、净化情况等）
+
+若环境中提供 gloscope 辅助工具（http_entrypoints / resolve / callers / callees），
+优先使用它们定位路由入口与函数关系，减少文件检索往返。"""
 
 
 def _real_runner(
@@ -81,22 +85,31 @@ def _real_runner(
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def _write_codex_home(cfg: Config) -> Path:
-    """生成 codex model_providers 配置：编排层与分诊层共用同一 provider 凭据。
+def _write_codex_home(cfg: Config, target: Path | None = None,
+                      callgraph: bool = False) -> Path:
+    """生成 codex 配置：model_providers（两层共用 provider 凭据）+ 可选 mcp_servers。
 
     CODEX_HOME 放用户目录下（~/.gloscope/codex-home）：codex 拒绝在系统临时目录
     创建 PATH aliases（helper binaries），且不能动用户真实的 ~/.codex。config.toml
-    幂等覆盖写入。
+    幂等覆盖写入；调用图 MCP server 用当前解释器启动（editable 安装可 import）。
     """
     home = Path.home() / ".gloscope" / "codex-home"
     home.mkdir(parents=True, exist_ok=True)
+    mcp_section = ""
+    if callgraph and target is not None:
+        # json.dumps 输出合法的 TOML 字符串字面量（处理 Windows 反斜杠转义）
+        mcp_section = f"""
+[mcp_servers.gloscope]
+command = {json.dumps(sys.executable)}
+args = [{json.dumps("-m")}, {json.dumps("gloscope.mcp_server")}, {json.dumps(str(target))}]
+"""
     (home / "config.toml").write_text(
         f"""[model_providers.{PROVIDER_ID}]
 name = "GloScope user provider"
 base_url = "{cfg.base_url}"
 env_key = "{ENV_KEY}"
 wire_api = "{cfg.wire_api}"
-""",
+{mcp_section}""",
         encoding="utf-8",
     )
     return home
@@ -130,11 +143,13 @@ class CodexVerifier:
         cfg: Config,
         codex_path: str = "codex",
         runner: Runner | None = None,
+        callgraph: bool = False,
     ) -> None:
         self._cfg = cfg
         # Windows 下 npm 安装的 codex 是 codex.cmd，subprocess 不解析裸名 → which 预解析
         self._codex = shutil.which(codex_path) or codex_path
         self._run = runner or _real_runner
+        self._callgraph = callgraph
         self._version: str | None = None  # 缓存 --version 结果；"" 表示探测失败
 
     def _probe_version(self) -> str:
@@ -189,7 +204,7 @@ class CodexVerifier:
         )
         with tempfile.TemporaryDirectory(prefix="gloscope-codex-") as tmp:
             tmpdir = Path(tmp)
-            codex_home = _write_codex_home(self._cfg)
+            codex_home = _write_codex_home(self._cfg, target, self._callgraph)
             schema_path = tmpdir / "output-schema.json"
             schema_path.write_text(
                 json.dumps(OUTPUT_SCHEMA, ensure_ascii=False, indent=2), encoding="utf-8"

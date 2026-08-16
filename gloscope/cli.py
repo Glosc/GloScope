@@ -30,12 +30,16 @@ def _default_factory(
     codex_path: str,
     diff_base: str | None = None,
     paths: list[str] | None = None,
+    no_callgraph: bool = False,
 ) -> Pipeline:
     generator = SemgrepCandidateGenerator(
         semgrep_path=semgrep_path, rules=semgrep_rules, diff_base=diff_base, paths=paths
     )
     triager = OpenAITriageClient(cfg) if cfg and not options.skip_triage else None
-    verifier = CodexVerifier(cfg, codex_path=codex_path) if cfg and not options.skip_verify else None
+    verifier = (
+        CodexVerifier(cfg, codex_path=codex_path, callgraph=not no_callgraph)
+        if cfg and not options.skip_verify else None
+    )
     return Pipeline(generator, triager=triager, verifier=verifier, options=options)
 
 
@@ -64,6 +68,8 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="只扫这些文件（逗号分隔，相对目标根；CVE 回放等定向扫描用）")
     p_scan.add_argument("--semgrep-path", default="semgrep", help="semgrep 可执行文件路径")
     p_scan.add_argument("--codex-path", default="codex", help="codex 可执行文件路径")
+    p_scan.add_argument("--no-callgraph", action="store_true",
+                        help="禁用验证层的调用图 MCP 工具（http_entrypoints/resolve 等）")
 
     p_eval = sub.add_parser("eval", help="对扫描报告计算四指标（召回率/误报/token/耗时）")
     p_eval.add_argument("report", help="scan 产生的 report.json")
@@ -98,6 +104,7 @@ def _cmd_scan(args: argparse.Namespace, factory: PipelineFactory) -> int:
         codex_path=args.codex_path,
         diff_base=args.diff_base,
         paths=[p.strip() for p in args.paths.split(",") if p.strip()] if args.paths else None,
+        no_callgraph=args.no_callgraph,
     )
     try:
         report = pipeline.run(Path(args.target))

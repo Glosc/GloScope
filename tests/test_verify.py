@@ -117,6 +117,21 @@ def test_codex_home_injects_model_provider_config(tmp_path):
     assert prov["base_url"] == "https://api.deepseek.com"
     assert prov["env_key"] == "GLOSCOPE_API_KEY"
     assert prov["wire_api"] == "responses"  # codex 0.147+ 硬性要求
+    assert "mcp_servers" not in cfg  # 默认不注入调用图工具
+
+
+def test_callgraph_injects_mcp_server_config(tmp_path, monkeypatch):
+    monkeypatch.setattr("gloscope.verify.shutil.which", lambda n: None)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "t").mkdir()
+    runner = FakeCodexRunner()
+    CodexVerifier(CFG, runner=runner, callgraph=True).verify(CAND, Path("t"))
+    cfg = tomllib.loads(runner.exec_calls[0]["codex_config"])
+    mcp = cfg["mcp_servers"]["gloscope"]
+    assert mcp["args"][0] == "-m"
+    assert mcp["args"][1] == "gloscope.mcp_server"
+    assert mcp["args"][2].endswith("t")  # 目标仓库绝对路径
+    assert mcp["command"].endswith("python") or mcp["command"].endswith("python.exe")
 
 
 def test_prompt_travels_via_stdin_not_argv(tmp_path):
