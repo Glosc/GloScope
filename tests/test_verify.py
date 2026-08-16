@@ -62,14 +62,15 @@ class FakeCodexRunner:
     def exec_calls(self) -> list[dict]:
         return [c for c in self.calls if "exec" in c["argv"]]
 
-    def __call__(self, argv, cwd, env, timeout):
-        self.calls.append({"argv": list(argv), "cwd": cwd, "env": dict(env), "timeout": timeout})
+    def __call__(self, argv, cwd, env, timeout, stdin_text=None):
+        self.calls.append({"argv": list(argv), "cwd": cwd, "env": dict(env),
+                           "timeout": timeout, "stdin": stdin_text})
         if self.raise_exc and "exec" in argv:
             raise self.raise_exc
         if "--version" in argv:
             out = "codex-cli 0.147.0" if self.version_returncode == 0 else ""
             return self.version_returncode, out, ""
-        # 临时 CODEX_HOME 在 _exec 返回后即销毁，调用时快照其内容
+        # 临时文件在 _exec 返回后即销毁，调用时快照其内容
         home = Path(env["CODEX_HOME"])
         self.calls[-1]["codex_config"] = (home / "config.toml").read_text(encoding="utf-8")
         if not self.dont_write:
@@ -118,16 +119,24 @@ def test_codex_home_injects_model_provider_config(tmp_path):
     assert prov["wire_api"] == "responses"  # codex 0.147+ 硬性要求
 
 
-def test_prompt_is_self_contained(tmp_path):
+def test_prompt_travels_via_stdin_not_argv(tmp_path):
+    """Windows 实测：含引号/中文的长 prompt 经 codex.CMD 会被 cmd.exe 破坏参数边界
+    （schema 路径被污染 → os error 2/3）。prompt 必须走 stdin（argv 以 `-` 结尾）。
+    """
     runner = FakeCodexRunner()
     make_verifier(runner).verify(CAND, tmp_path)
-    prompt = runner.exec_calls[0]["argv"][-1]
-    assert CAND.check_id in prompt
-    assert "app.py" in prompt and "12" in prompt
+    argv = runner.exec_calls[0]["argv"]
+    stdin_text = runner.exec_calls[0]["stdin"]
+    assert argv[-1] == "-"  # codex exec 的 stdin 模式
+    # prompt 内容不进命令行
+    assert not any(CAND.check_id in a for a in argv if isinstance(a, str))
+    assert stdin_text is not None
+    assert CAND.check_id in stdin_text
+    assert "app.py" in stdin_text and "12" in stdin_text
     # 方法论 + 输出契约
-    assert "污点" in prompt
-    assert "verdict" in prompt and "taint_path" in prompt
-    assert "file.py:42" in prompt  # taint_path 格式示例
+    assert "污点" in stdin_text
+    assert "verdict" in stdin_text and "taint_path" in stdin_text
+    assert "file.py:42" in stdin_text  # taint_path 格式示例
 
 
 def test_output_schema_file_strict(tmp_path):
@@ -143,9 +152,11 @@ def test_output_schema_file_strict(tmp_path):
 
 
 def test_parses_confirmed_verification_with_tokens(tmp_path):
+    # codex 0.147 --json 真实事件形状：顶层 turn.completed + usage；多 turn 累计
     token_stream = "\n".join([
-        json.dumps({"msg": {"type": "token_count", "total_token_usage": {"input_tokens": 100, "output_tokens": 40}}}),
-        json.dumps({"msg": {"type": "token_count", "total_token_usage": {"input_tokens": 150, "output_tokens": 60}}}),
+        json.dumps({"type": "turn.completed", "usage": {"input_tokens": 5000, "output_tokens": 40}}),
+        '{"type": "agent_message", "message": "thinking..."}',
+        json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3000, "cached_input_tokens": 2800, "output_tokens": 60}}),
     ])
     runner = FakeCodexRunner(stdout=token_stream)
     v = make_verifier(runner).verify(CAND, tmp_path)
@@ -155,7 +166,7 @@ def test_parses_confirmed_verification_with_tokens(tmp_path):
     assert v.confidence == "high"
     assert "id 参数" in v.poc_idea
     assert v.error is None
-    assert (v.tokens_in, v.tokens_out) == (150, 60)  # 取最后一次 token_count
+    assert (v.tokens_in, v.tokens_out) == (8000, 100)  # 两个 turn 累计
     assert v.model == "deepseek-reasoner"
 
 
@@ -220,3 +231,16 @@ def test_codex_name_resolved_via_pathext(tmp_path, monkeypatch):
     runner2 = FakeCodexRunner()
     CodexVerifier(CFG, codex_path="codex", runner=runner2).verify(CAND, tmp_path)
     assert runner2.calls[0]["argv"][0] == "codex"
+
+
+def test_target_resolved_to_absolute_path(tmp_path, monkeypatch):
+    """Windows 实测：相对路径 cwd/-C 传给 codex 的 .cmd shim 报 os error 3，必须绝对化。"""
+    monkeypatch.setattr("gloscope.verify.shutil.which", lambda n: None)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "t").mkdir()
+    runner = FakeCodexRunner()
+    CodexVerifier(CFG, runner=runner).verify(CAND, Path("t"))
+    call = runner.exec_calls[0]
+    argv = call["argv"]
+    assert argv[argv.index("-C") + 1] == str(tmp_path / "t")
+    assert call["cwd"] == tmp_path / "t"

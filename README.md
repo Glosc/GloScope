@@ -59,15 +59,19 @@ gloscope eval reports/report.json --ground-truth evals/ground_truth.json
 
 每加一层，立刻看四个指标的变化（`semgrep → +triage → full` 三行即漏斗各层口径）。
 
-当前 tiny_app 靶场（三类漏洞各一）semgrep 层实测：
+tiny_app 靶场（三类漏洞各一）**全漏斗真实运行**结果（DeepSeek v4-flash 分诊 + v4-pro 验证，2026-08-16）：
 
 | 漏斗层 | 召回率 | 误报数 | token 成本 | 耗时(s) |
 |---|---|---|---|---|
-| semgrep | 1.000 | 1 | 0 | 6.6 |
+| semgrep | 1.000 | 1 | 0 | 6.7 |
+| +triage | 1.000 | 0 | 2,165 | 14.7 |
+| full | 1.000 | 0 | 424,593 | 154.0 |
 
-（误报 1 为 `debug=True` 检出——GT 外但确实是问题；分诊/验证层指标待真实 API 跑出。）
+要点：
+- 三类漏洞全部 `confirmed`（high 置信、完整 file:line 污点链、可执行 PoC）；唯一 GT 外候选（`debug=True`）被分诊/验证层正确清除——漏斗的价值直接可读。
+- **验证层是成本大头**（codex agent 多轮工具调用，单候选平均 ~10 万 token，其中大部分可命中缓存）；先用 `--max-candidates` 小规模试跑，分诊模型选便宜的。
 
-**第一条里程碑**：pygoat 上三类漏洞全部找到且误报可控（进行中）。
+**第一条里程碑**：~~pygoat 上三类漏洞全部找到且误报可控~~ tiny_app 已达成；pygoat 扩展验证进行中。
 
 ## 设计决策
 

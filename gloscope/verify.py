@@ -17,8 +17,8 @@ from typing import Callable, TypeAlias
 from gloscope.config import Config
 from gloscope.models import Candidate, Verification, asdict_jsonable
 
-# runner: (argv, cwd, env, timeout) -> (returncode, stdout, stderr)。可注入以便测试。
-Runner: TypeAlias = Callable[[list[str], Path, dict, float], "tuple[int, str, str]"]
+# runner: (argv, cwd, env, timeout, stdin_text) -> (returncode, stdout, stderr)。可注入以便测试。
+Runner: TypeAlias = Callable[[list[str], Path, dict, float, "str | None"], "tuple[int, str, str]"]
 
 PROVIDER_ID = "gloscope"
 ENV_KEY = "GLOSCOPE_API_KEY"
@@ -71,9 +71,12 @@ PROMPT_TEMPLATE = """你是一名资深 Web 安全审计专家，正在验证一
 - explanation: 结论依据（可达性、净化情况等）"""
 
 
-def _real_runner(argv: list[str], cwd: Path, env: dict, timeout: float) -> tuple[int, str, str]:
+def _real_runner(
+    argv: list[str], cwd: Path, env: dict, timeout: float, stdin_text: str | None = None
+) -> tuple[int, str, str]:
     proc = subprocess.run(
-        argv, cwd=str(cwd), env=env, timeout=timeout, capture_output=True, text=True
+        argv, cwd=str(cwd), env=env, timeout=timeout, capture_output=True,
+        text=True, input=stdin_text,
     )
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -100,7 +103,11 @@ wire_api = "{cfg.wire_api}"
 
 
 def _parse_tokens(stdout: str) -> tuple[int, int]:
-    """从 codex --json 事件流（JSONL）尽力提取 token 用量；解析不了就返回 0。"""
+    """从 codex --json 事件流（JSONL）尽力提取 token 用量；解析不了就返回 0。
+
+    codex 0.147 真实形状：顶层 {"type": "turn.completed", "usage": {input_tokens,
+    output_tokens, ...}}，一个会话多个 turn 需累计。
+    """
     tokens_in = tokens_out = 0
     for line in stdout.splitlines():
         line = line.strip()
@@ -110,11 +117,10 @@ def _parse_tokens(stdout: str) -> tuple[int, int]:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        msg = event.get("msg") or event.get("payload") or event
-        usage = msg.get("total_token_usage") if isinstance(msg, dict) else None
-        if isinstance(usage, dict):
-            tokens_in = int(usage.get("input_tokens", 0))
-            tokens_out = int(usage.get("output_tokens", 0))
+        usage = event.get("usage") if isinstance(event, dict) else None
+        if isinstance(usage, dict) and "input_tokens" in usage:
+            tokens_in += int(usage.get("input_tokens", 0))
+            tokens_out += int(usage.get("output_tokens", 0))
     return tokens_in, tokens_out
 
 
@@ -136,7 +142,7 @@ class CodexVerifier:
         if self._version is None:
             argv = [self._codex, "--version"]
             try:
-                returncode, stdout, _ = self._run(argv, Path("."), dict(os.environ), 10.0)
+                returncode, stdout, _ = self._run(argv, Path("."), dict(os.environ), 10.0, None)
             except Exception as e:  # noqa: BLE001
                 self._version = ""
                 raise RuntimeError(f"codex 版本探测失败: {e}") from e
@@ -150,9 +156,11 @@ class CodexVerifier:
         return self._version
 
     def verify(self, candidate: Candidate, target: Path) -> Verification:
+        # 相对路径 cwd/-C 会让 codex 的 .cmd shim 报 os error 3（Windows 实测），必须绝对化
+        target = Path(target).resolve()
         try:
             self._probe_version()
-            return self._exec(candidate, Path(target))
+            return self._exec(candidate, target)
         except subprocess.TimeoutExpired:
             return self._inconclusive(f"codex exec 超时（>{self._cfg.verify_timeout:g}s）")
         except FileNotFoundError:
@@ -198,11 +206,15 @@ class CodexVerifier:
                 "-o", str(out_path),
                 "-c", f"model_provider={PROVIDER_ID}",
                 "-m", self._cfg.verify_model,
-                prompt,
+                # prompt 走 stdin：Windows 下含引号/中文的长 prompt 经 .cmd 会被
+                # cmd.exe 破坏参数边界（BatBadBut 类缺陷），且彻底消除注入面
+                "-",
             ]
             env = {**os.environ, "CODEX_HOME": str(codex_home),
                    ENV_KEY: self._cfg.api_key}
-            returncode, stdout, stderr = self._run(argv, target, env, self._cfg.verify_timeout)
+            returncode, stdout, stderr = self._run(
+                argv, target, env, self._cfg.verify_timeout, prompt
+            )
 
             if returncode != 0:
                 return self._inconclusive(
