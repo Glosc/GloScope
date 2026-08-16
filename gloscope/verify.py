@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable, TypeAlias
 
+from gloscope.callgraph import build_callgraph
 from gloscope.config import Config
 from gloscope.models import Candidate, Verification, asdict_jsonable
 
@@ -71,8 +72,7 @@ PROMPT_TEMPLATE = """你是一名资深 Web 安全审计专家，正在验证一
 - poc_idea: 如何构造请求验证（无则空字符串）
 - explanation: 结论依据（可达性、净化情况等）
 
-若环境中提供 gloscope 辅助工具（http_entrypoints / resolve / callers / callees），
-优先使用它们定位路由入口与函数关系，减少文件检索往返。"""
+若附有「HTTP 入口索引」，直接引用其中的路由入口（file:line），不必再搜索路由注册。"""
 
 
 def _real_runner(
@@ -85,34 +85,47 @@ def _real_runner(
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def _write_codex_home(cfg: Config, target: Path | None = None,
-                      callgraph: bool = False) -> Path:
-    """生成 codex 配置：model_providers（两层共用 provider 凭据）+ 可选 mcp_servers。
+def _write_codex_home(cfg: Config) -> Path:
+    """生成 codex model_providers 配置：编排层与分诊层共用同一 provider 凭据。
 
     CODEX_HOME 放用户目录下（~/.gloscope/codex-home）：codex 拒绝在系统临时目录
     创建 PATH aliases（helper binaries），且不能动用户真实的 ~/.codex。config.toml
-    幂等覆盖写入；调用图 MCP server 用当前解释器启动（editable 安装可 import）。
+    幂等覆盖写入。注意：codex exec 实测静默忽略 [mcp_servers] 段（仅 TUI 生效），
+    调用图辅助改由 prompt 注入（见 _entrypoint_index）。
     """
     home = Path.home() / ".gloscope" / "codex-home"
     home.mkdir(parents=True, exist_ok=True)
-    mcp_section = ""
-    if callgraph and target is not None:
-        # json.dumps 输出合法的 TOML 字符串字面量（处理 Windows 反斜杠转义）
-        mcp_section = f"""
-[mcp_servers.gloscope]
-command = {json.dumps(sys.executable)}
-args = [{json.dumps("-m")}, {json.dumps("gloscope.mcp_server")}, {json.dumps(str(target))}]
-"""
     (home / "config.toml").write_text(
         f"""[model_providers.{PROVIDER_ID}]
 name = "GloScope user provider"
 base_url = "{cfg.base_url}"
 env_key = "{ENV_KEY}"
 wire_api = "{cfg.wire_api}"
-{mcp_section}""",
+""",
         encoding="utf-8",
     )
     return home
+
+
+def _entrypoint_index(target: Path, max_lines: int = 150) -> str:
+    """调用图 HTTP 入口索引（静态提取，注入 prompt）。
+
+    codex exec 对 [mcp_servers] 配置静默忽略（2026-08 实测，RUST_LOG 无启动日志），
+    退化为零协议风险的 prompt 注入：验证 agent 的惯常第一步（找路由入口）直接给出。
+    """
+    try:
+        graph = build_callgraph(target)
+    except Exception:  # noqa: BLE001 — 索引失败不阻断验证
+        return ""
+    if not graph.entrypoints:
+        return ""
+    lines = [
+        f"{e.method:<10} {e.path:<30} {e.handler} ({e.file}:{e.line})"
+        for e in graph.entrypoints
+    ]
+    if len(lines) > max_lines:
+        lines = lines[:max_lines] + [f"…（共 {len(graph.entrypoints)} 个入口，已截断）"]
+    return "\n".join(lines)
 
 
 def _parse_tokens(stdout: str) -> tuple[int, int]:
@@ -149,6 +162,7 @@ class CodexVerifier:
         # Windows 下 npm 安装的 codex 是 codex.cmd，subprocess 不解析裸名 → which 预解析
         self._codex = shutil.which(codex_path) or codex_path
         self._run = runner or _real_runner
+        # callgraph=True 时把 HTTP 入口索引注入 prompt（codex exec 忽略 mcp_servers 配置）
         self._callgraph = callgraph
         self._version: str | None = None  # 缓存 --version 结果；"" 表示探测失败
 
@@ -204,7 +218,14 @@ class CodexVerifier:
         )
         with tempfile.TemporaryDirectory(prefix="gloscope-codex-") as tmp:
             tmpdir = Path(tmp)
-            codex_home = _write_codex_home(self._cfg, target, self._callgraph)
+            codex_home = _write_codex_home(self._cfg)
+            if self._callgraph:
+                index = _entrypoint_index(target)
+                if index:
+                    prompt += (
+                        "\n\nHTTP 入口索引（静态提取，file:line 可直接引用，"
+                        "不必再搜索路由注册）：\n" + index
+                    )
             schema_path = tmpdir / "output-schema.json"
             schema_path.write_text(
                 json.dumps(OUTPUT_SCHEMA, ensure_ascii=False, indent=2), encoding="utf-8"

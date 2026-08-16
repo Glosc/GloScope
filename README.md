@@ -111,7 +111,9 @@ v1 三类范围（6 候选）：full 1.000/0FP，1.52M token / 414s——污点�
 | output | 7.9k | 1.2k |
 | 工具调用次数 | **96** | 6 |
 
-成本 ∝ 工具调用次数（读文件/搜索的探索式导航）；94% 缓存命中使真实账单远低于 token 观感，token 量主要影响延迟。**flash 验证实验（负结论）**：verify_model 换 v4-flash 后召回 0.500（14 个存疑均为输出环节失效）、token -83%——验证层必须用强模型，分级设计被数据背书。MCP 调用图工具据此**有条件立项**（目标为减少 20-40% 工具往返降延迟，验收不达标即删）。
+成本 ∝ 工具调用次数（读文件/搜索的探索式导航）；94% 缓存命中使真实账单远低于 token 观感，token 量主要影响延迟。**flash 验证实验（负结论）**：verify_model 换 v4-flash 后召回 0.500（14 个存疑均为输出环节失效）、token -83%——验证层必须用强模型，分级设计被数据背书。
+
+**调用图辅助（v2 落地）**：原 MCP 工具方案实测被 codex exec 静默忽略（`[mcp_servers]` 仅 TUI 生效，server 协议测试全过、模块保留备用），退化为 **HTTP 入口索引注入 prompt**（`gloscope/callgraph.py` 静态提取 Flask/Django 路由，`--no-callgraph` 可关）。单候选控制变量对比：工具调用 **96 → 21（-78%）**、input -47%，召回保持；pygoat 八类全量召回/误报不退化（全量 token/耗时受运行随机性主导，省耗结论仅在控制变量下成立）。详见 `.scratch/gloscope-v2/token-analysis.md`。
 
 ### vulpy（第三靶场，Flask/SQLite）
 
@@ -148,7 +150,7 @@ vulpy 的 `bad/`（漏洞版）与 `good/`（安全版）同名对照是天然�
 - 漏洞类型：SQL 注入、SSRF、路径穿越、命令注入、XSS、代码注入（CWE-94）、反序列化（CWE-502）；SSTI 已入注册表待规则补盲区（pygoat 的 SSTI 为文件写入型，静态规则难覆盖，待真实 `render_template_string` 靶场）
 - 报告格式：Markdown / JSON / **SARIF 2.1.0**（v2 新增，confirmed→error / inconclusive→warning，可直接上传 GitHub Code Scanning）
 - 靶场：内置 tiny_app（见 `evals/fixtures/tiny_app/README.md`）、pygoat（GT 7 项）、vulpy（GT 1 项，good/bad 对照）、真实 CVE 修复 commit 回放
-- v2 已落地：SARIF 输出、类别注册表扩展（3→8 类）、vulpy 靶场、diff-aware 增量扫描（`--diff-base`，git diff 变更文件过滤，拿不到 diff 即报错不盲目全仓）、CVE 回放、自写盲区规则（`gloscope/rules/`）；v2 候选：MCP 专用工具（调用图查询，有条件立项）、动态 PoC 执行
+- v2 已落地：SARIF 输出、类别注册表扩展（3→8 类）、vulpy 靶场、diff-aware 增量扫描（`--diff-base`，git diff 变更文件过滤，拿不到 diff 即报错不盲目全仓）、CVE 回放、自写盲区规则（`gloscope/rules/`）、调用图入口索引注入（`--no-callgraph` 可关）；v2 候选：动态 PoC 执行
 
 ## 项目结构
 

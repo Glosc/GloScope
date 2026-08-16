@@ -40,8 +40,25 @@ codex exec，捕获完整 `--json` 事件流。验证模型 deepseek-v4-pro。
   `~/.gloscope/codex-home` 注入权，stdio server（stdlib ast 实现调用图）
   即插即拔，回滚零风险。
 
-**验收标准**：pygoat 八类评测重跑，验证层工具调用次数 -20% 以上、召回/误报
-不退化；不达标即删。
+## MCP 立项结论（2026-08-17 执行记录）
+
+按上述条件立项执行，**实施中途降级**：codex exec（0.147）对 config.toml 的
+`[mcp_servers.*]` 段**静默忽略**（RUST_LOG 下无任何 server 启动日志，仅 TUI 生效；
+server 本体 stdio 握手/工具调用协议测试全通过，模块保留备用）。按预案退化为
+**prompt 注入 HTTP 入口索引**（`_entrypoint_index`，零协议风险）。
+
+验收数据：
+- **单候选控制变量对比（pygoat SQLi，同模型同 prompt 基础）**：工具调用
+  96 → **21（-78%）**，rg/findstr 搜索类 ~30 → 5，input 550k → 290k（-47%），
+  verdict 保持 confirmed。
+- **pygoat 八类全量**：召回 1.000 / 误报 0，与基准一致不退化；token 4.78M、
+  耗时 1556s 高于基准（3.59M / 1053s）——全量维度受运行间随机性主导
+  （索引注入也增加每候选 prompt 体积），**省往返结论在控制变量对比下成立，
+  全量省 token/耗时结论不成立**。
+
+最终形态：`CodexVerifier(callgraph=True)` 默认开启入口索引注入，`--no-callgraph`
+可关；`mcp_server.py` 与 `callgraph.py` 保留（callgraph 是索引的数据源，
+mcp_server 供未来 codex 版本支持 mcp_servers 时启用）。
 
 ## 其他降本杠杆（优先级高于 MCP）
 

@@ -53,6 +53,10 @@ TARGETS = [
     ("pygoat", Path(os.environ["TEMP"]) / "gloscope-pygoat", SQLI_CAND),
     ("tiny_app", materialize_tiny(Path(os.environ["TEMP"]) / "gloscope-token-tiny"), TINY_CAND),
 ]
+# A4 对比模式：只跑指定 target，可开调用图 MCP（--callgraph）
+if len(sys.argv) > 1 and sys.argv[1].startswith("--only="):
+    TARGETS = [t for t in TARGETS if t[0] == sys.argv[1].split("=", 1)[1]]
+CALLGRAPH = "--callgraph" in sys.argv
 
 out_dir = REPO / "evals/results/token-audit"
 out_dir.mkdir(parents=True, exist_ok=True)
@@ -71,7 +75,7 @@ for name, target, cand in TARGETS:
     )
     with tempfile.TemporaryDirectory(prefix="gloscope-audit-") as tmp:
         tmpdir = Path(tmp)
-        home = _write_codex_home(cfg)
+        home = _write_codex_home(cfg, target, CALLGRAPH)
         schema = tmpdir / "schema.json"
         schema.write_text(json.dumps(OUTPUT_SCHEMA, ensure_ascii=False), encoding="utf-8")
         out = tmpdir / "final.json"
@@ -85,7 +89,10 @@ for name, target, cand in TARGETS:
         print(f"[{name}] running …", flush=True)
         proc = subprocess.run(argv, cwd=str(target), env=env, timeout=600,
                               capture_output=True, text=True, input=prompt)
-        stream_file = out_dir / f"{name}.jsonl"
+        suffix = "-mcp" if CALLGRAPH else ""
+        stream_file = out_dir / f"{name}{suffix}.jsonl"
         stream_file.write_text(proc.stdout, encoding="utf-8")
-        print(f"[{name}] rc={proc.returncode} events={len(proc.stdout.splitlines())} "
+        print(f"[{name}{suffix}] rc={proc.returncode} events={len(proc.stdout.splitlines())} "
               f"-> {stream_file.name}", flush=True)
+        if proc.returncode != 0:
+            print(proc.stderr[-500:], flush=True)

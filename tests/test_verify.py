@@ -120,18 +120,33 @@ def test_codex_home_injects_model_provider_config(tmp_path):
     assert "mcp_servers" not in cfg  # 默认不注入调用图工具
 
 
-def test_callgraph_injects_mcp_server_config(tmp_path, monkeypatch):
+def test_callgraph_injects_entrypoint_index_into_prompt(tmp_path, monkeypatch):
+    """codex exec 实测忽略 [mcp_servers] 配置 → 调用图辅助退化为 prompt 注入：
+    HTTP 入口索引直接给到 agent，省去首轮 rg 摸索。"""
+    from tests.test_callgraph import make_fixture
+
     monkeypatch.setattr("gloscope.verify.shutil.which", lambda n: None)
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "t").mkdir()
+    make_fixture(tmp_path)  # 含 Flask @app.route("/user") 夹具
     runner = FakeCodexRunner()
-    CodexVerifier(CFG, runner=runner, callgraph=True).verify(CAND, Path("t"))
+    CodexVerifier(CFG, runner=runner, callgraph=True).verify(CAND, tmp_path)
+    stdin_text = runner.exec_calls[0]["stdin"]
+    assert "HTTP 入口索引" in stdin_text
+    assert "/user" in stdin_text and "app.routes.user_view" in stdin_text
+    assert "app/routes.py" in stdin_text
     cfg = tomllib.loads(runner.exec_calls[0]["codex_config"])
-    mcp = cfg["mcp_servers"]["gloscope"]
-    assert mcp["args"][0] == "-m"
-    assert mcp["args"][1] == "gloscope.mcp_server"
-    assert mcp["args"][2].endswith("t")  # 目标仓库绝对路径
-    assert mcp["command"].endswith("python") or mcp["command"].endswith("python.exe")
+    assert "mcp_servers" not in cfg  # mcp_servers 注入已被 prompt 方案取代
+
+
+def test_callgraph_off_has_no_index(tmp_path, monkeypatch):
+    from tests.test_callgraph import make_fixture
+
+    monkeypatch.setattr("gloscope.verify.shutil.which", lambda n: None)
+    make_fixture(tmp_path)
+    runner = FakeCodexRunner()
+    CodexVerifier(CFG, runner=runner).verify(CAND, tmp_path)
+    # 关闭时 prompt 只有提示行，不含夹具路由的索引行
+    stdin_text = runner.exec_calls[0]["stdin"]
+    assert "app.routes.user_view" not in stdin_text
 
 
 def test_prompt_travels_via_stdin_not_argv(tmp_path):
