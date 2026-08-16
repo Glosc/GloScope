@@ -65,3 +65,8 @@ IDE 等 SARIF 生态消费方；同时类别注册表只覆盖三类漏洞，pyg
   pygoat 八类范围 GT 12 项，full 1.000/0FP（3.59M token）。
 - `challenge/views.py:81` 的 subprocess 候选可控性存疑，未入 GT；验证层实测判
   false_positive（container_id 来自数据库），与人工判断一致。
+- **CVE 回放（2026-08-16）**：harness `evals/cve_replay.py` + 3 案例全部人工审 diff
+  收录。结果 1/3 命中（redshift eval 注入 confirmed 且污点链自网络字节起）、
+  3/3 修复版干净。两个 path_traversal miss 均为**候选生成层规则盲区**
+  （实例属性路径/间接 ref 形态零候选）——tree-sitter 自写规则的启动条件已满足：
+  GitPython/nltk 漏洞版即真实盲区靶场，CVE 回放即其评测基准。

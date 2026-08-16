@@ -53,12 +53,16 @@ class SemgrepCandidateGenerator:
         timeout: float = 300.0,
         runner: Runner | None = None,
         diff_base: str | None = None,
+        paths: list[str] | None = None,
     ) -> None:
+        if diff_base is not None and paths:
+            raise ValueError("paths 与 diff_base 互斥：显式文件清单与增量模式二选一")
         # Windows 下 npm/venv 工具多为 .cmd/.exe shim，subprocess 不解析裸名 → which 预解析
         self._semgrep = shutil.which(semgrep_path) or semgrep_path
         self._rules = rules
         self._timeout = timeout
         self._diff_base = diff_base
+        self._paths = paths
         self._run = runner or _real_runner
 
     @staticmethod
@@ -78,7 +82,9 @@ class SemgrepCandidateGenerator:
         target = Path(target)
         # --no-git-ignore：审计需要覆盖保证，gitignored 文件同样要扫
         argv = [self._semgrep, "--json", "--no-git-ignore", "--config", self._rules]
-        if self._diff_base is not None:
+        if self._paths is not None:
+            argv += self._paths
+        elif self._diff_base is not None:
             try:
                 changed = _git_changed_files(target, self._diff_base)
             except Exception as e:  # noqa: BLE001 — 增量信息拿不到就不该盲目全仓扫

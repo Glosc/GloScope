@@ -91,6 +91,18 @@ v1 三类范围（6 候选）：full 1.000/0FP，1.52M token / 414s——污点�
 
 全量分诊观测（135 候选不过滤）：keep 80 / drop 55（**砍削 40%**，94k token / 439s）。
 
+### CVE 回放（真实世界代码，v2 新增）
+
+`evals/cve_replay.py`：浅取 CVE 修复 commit（`--depth 2`）→ 漏洞版/修复版双向验证（案例均经人工审 diff 收录，见 `evals/cve_cases.json`）：
+
+| CVE | 项目 | 类别 | 漏洞版命中 | 修复版干净 |
+|---|---|---|---|---|
+| CVE-2026-8838 | aws redshift-connector | code_injection | ✅（污点链自服务端网络字节追到 `eval`） | ✅（零候选） |
+| CVE-2026-12243 | nltk | path_traversal | ❌（**规则盲区**：`open(self._path)` 实例属性形态零候选） | ✅ |
+| CVE-2023-41040 | GitPython | path_traversal | ❌（**规则盲区**：间接 ref 路径零候选） | ✅ |
+
+1/3 命中、3/3 修复版干净——这组数据比靶场全绿更有信息量：**静态规则在真实世界穿越类漏洞上的召回盲区被精确量化**（miss 全部发生在候选生成层，验证层零失误）。它同时为 tree-sitter 自写规则提供了真实靶场与评测基准（CVE 回放即其回归测试）。
+
 ### vulpy（第三靶场，Flask/SQLite）
 
 vulpy 的 `bad/`（漏洞版）与 `good/`（安全版）同名对照是天然的误报考验——semgrep 在两边都会报格式相似的 sink：

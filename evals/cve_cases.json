@@ -1,0 +1,26 @@
+[
+  {
+    "id": "CVE-2026-8838",
+    "repo": "https://github.com/aws/amazon-redshift-python-driver",
+    "fix_commit": "69a69dfdead75918e20384da52bcd760ded8dbca",
+    "category": "code_injection",
+    "file": "redshift_connector/utils/type_utils.py",
+    "note": "vector_in 裸 eval 拼接数据库返回数据 → 改列表解析"
+  },
+  {
+    "id": "CVE-2026-12243",
+    "repo": "https://github.com/nltk/nltk",
+    "fix_commit": "aec4fce1b84ad725b8975f7365b23a4f626572a9",
+    "category": "path_traversal",
+    "file": "nltk/data.py",
+    "note": "数据路径加载的穿越加固 → pathsec 安全 open/urlopen"
+  },
+  {
+    "id": "CVE-2023-41040",
+    "repo": "https://github.com/gitpython-developers/GitPython",
+    "fix_commit": "74e55ee4544867e1bd976b7df5a45869ee397b0b",
+    "category": "path_traversal",
+    "file": "git/refs/symbolic.py",
+    "note": "ref_path 含 .. 读仓库外文件 → 拒绝包含 .. 的 ref"
+  }
+]

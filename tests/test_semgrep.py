@@ -301,3 +301,20 @@ def test_diff_base_git_failure_is_clear_error(tmp_path, monkeypatch):
     with pytest.raises(SemgrepError, match="not a git repository"):
         gen.run(Path("t"))
     assert runner.calls == []  # 失败发生在 semgrep 之前
+
+
+def test_paths_filter_limits_semgrep_to_explicit_files():
+    runner = FakeRunner(stdout=json.dumps({"results": [], "errors": []}))
+    SemgrepCandidateGenerator(
+        paths=["app.py", "lib/util.py"], runner=runner
+    ).run(Path("t"))
+    argv = runner.calls[0][0]
+    assert argv[argv.index("--config") + 2:] == ["app.py", "lib/util.py"]
+
+
+def test_diff_base_and_paths_are_mutually_exclusive():
+    runner = FakeRunner(stdout=json.dumps({"results": [], "errors": []}))
+    with pytest.raises(ValueError, match="paths 与 diff_base"):
+        SemgrepCandidateGenerator(
+            paths=["a.py"], diff_base="main", runner=runner
+        )
