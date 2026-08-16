@@ -156,6 +156,12 @@ def test_v2_rule_families_map_to_new_categories():
             {"check_id": "python.ssti.security.server-side-template-injection",
              "path": "views.py", "start": {"line": 995}, "end": {"line": 995},
              "extra": {"message": "m", "lines": "s", "metadata": {}}},
+            {"check_id": "python.lang.security.audit.eval-detected.eval-detected",
+             "path": "views.py", "start": {"line": 1100}, "end": {"line": 1100},
+             "extra": {"message": "m", "lines": "s", "metadata": {}}},
+            {"check_id": "python.lang.security.deserialization.pickle.avoid-pickle",
+             "path": "views.py", "start": {"line": 1200}, "end": {"line": 1200},
+             "extra": {"message": "m", "lines": "s", "metadata": {}}},
         ]
     }
     cands = make_gen(FakeRunner(stdout=json.dumps(sample))).run(Path("t"))
@@ -163,8 +169,10 @@ def test_v2_rule_families_map_to_new_categories():
     assert by_line[290].category == "xss"
     assert by_line[430].cwe == "CWE-78"
     # 430/431/432 同类相邻 → dedup 合一
-    assert sorted(c.start_line for c in cands) == [290, 430, 995]
+    assert sorted(c.start_line for c in cands) == [290, 430, 995, 1100, 1200]
     assert by_line[995].category == "ssti"
+    assert by_line[1100].category == "code_injection"
+    assert by_line[1200].category == "deserialization"
 
 
 def test_duplicate_rules_on_same_sink_are_deduped():

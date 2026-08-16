@@ -5,5 +5,10 @@
   {"path": "introduction/views.py", "category": "ssrf", "line": 963},
   {"path": "introduction/views.py", "category": "xss", "line": 290},
   {"path": "introduction/views.py", "category": "command_injection", "line": 430},
-  {"path": "introduction/mitre.py", "category": "command_injection", "line": 233}
+  {"path": "introduction/mitre.py", "category": "command_injection", "line": 233},
+  {"path": "introduction/mitre.py", "category": "code_injection", "line": 217},
+  {"path": "introduction/views.py", "category": "code_injection", "line": 456},
+  {"path": "introduction/views.py", "category": "deserialization", "line": 211},
+  {"path": "introduction/views.py", "category": "deserialization", "line": 560},
+  {"path": "dockerized_labs/insec_des_lab/main.py", "category": "deserialization", "line": 27}
 ]

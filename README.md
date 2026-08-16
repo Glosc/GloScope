@@ -84,10 +84,7 @@ tiny_app 靶场（三类漏洞各一）**全漏斗真实运行**结果（DeepSee
 
 v1 三类范围（6 候选）：full 1.000/0FP，1.52M token / 414s——污点链自 Django 路由注册追到 sink。
 
-v2 六类范围（14 候选）亮点是**逐条鉴别力**而非一刀切：
-- `challenge/views.py:81` subprocess 候选被验证层正确判 false_positive（`container_id` 来自数据库而非 HTTP 参数）；
-- `mitre.py:233`（用户可控 `ip` 拼接 `nmap` + `shell=True`）被挖出并 confirmed；
-- 4 个 XSS 候选三种归宿：1 confirmed（真实反射点）、2 false_positive（audit 级弱信号规则误报）、1 被分诊砍——同文件同类多点位冗余检出保住了召回。
+**v2 八类范围（22 候选，GT 12 项）：full 1.000 / 0FP，3.59M token / 1053s。** 新增类别 code_injection（CWE-94，`eval()` 用户输入）与 deserialization（CWE-502，pickle cookie / `yaml.load` 上传文件）全部命中，且再次展示判别力：`pickle.dumps`（服务器侧构造，非漏洞）被分诊砍、`challenge/views.py:81`（数据库来源参数）被验证层判 FP。v2 六类中间结果（14 候选/GT 7 项）同为 1.000/0FP（3.34M token）。
 
 已知盲区（记录于 `.scratch/gloscope-v2/spec.md`）：**SSTI 在 semgrep `auto` 规则集下零候选**（tree-sitter 自写规则的直接依据）；`eval()` 代码注入（CWE-94）与反序列化（CWE-502）类别留待后续扩展。
 
@@ -125,10 +122,10 @@ vulpy 的 `bad/`（漏洞版）与 `good/`（安全版）同名对照是天然�
 ## 目标与范围
 
 - 目标代码：Python Web（Flask / FastAPI / Django）
-- 漏洞类型：SQL 注入、SSRF、路径穿越、命令注入、XSS（v2 扩展；SSTI 已入注册表待规则补盲区）
+- 漏洞类型：SQL 注入、SSRF、路径穿越、命令注入、XSS、代码注入（CWE-94）、反序列化（CWE-502）；SSTI 已入注册表待规则补盲区（pygoat 的 SSTI 为文件写入型，静态规则难覆盖，待真实 `render_template_string` 靶场）
 - 报告格式：Markdown / JSON / **SARIF 2.1.0**（v2 新增，confirmed→error / inconclusive→warning，可直接上传 GitHub Code Scanning）
 - 靶场：内置 tiny_app（见 `evals/fixtures/tiny_app/README.md`）、pygoat（GT 7 项）、vulpy（GT 1 项，good/bad 对照）、真实 CVE 修复 commit 回放
-- v2 已落地：SARIF 输出、类别注册表扩展；v2 候选：tree-sitter 自写规则补盲区（SSTI 实测零候选）、MCP 专用工具（调用图查询）、动态 PoC 执行、diff-aware 增量扫描、code_injection（CWE-94）/deserialization（CWE-502）类别
+- v2 已落地：SARIF 输出、类别注册表扩展（3→8 类）、vulpy 靶场；v2 候选：MCP 专用工具（调用图查询）、动态 PoC 执行、diff-aware 增量扫描、CVE 回放
 
 ## 项目结构
 

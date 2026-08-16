@@ -30,6 +30,9 @@ VULN_CATEGORIES: dict[str, tuple[str, tuple[str, ...]]] = {
                                       "dangerous-subprocess-use")),
     "xss": ("CWE-79", ("xss", "cross-site-scripting")),
     "ssti": ("CWE-1336", ("ssti", "server-side-template-injection")),
+    "code_injection": ("CWE-94", ("user-eval", "eval-detected")),
+    "deserialization": ("CWE-502", ("pickle", "deserialization",
+                                     "insecure-deserialization")),
 }
 
 CWE_TO_CATEGORY: dict[str, str] = {

@@ -57,9 +57,11 @@ IDE 等 SARIF 生态消费方；同时类别注册表只覆盖三类漏洞，pyg
 ## Further Notes
 
 - v1 的 pygoat 观测（unknown keep 74 个）是本 spec 的直接动因。
-- pygoat 实测补充（2026-08-16）：**SSTI 是 semgrep `auto` 规则集的盲区**（pygoat 的
-  SSTI lab 未产生任何候选）——tree-sitter 自写规则（v2 后续 spec）的直接依据；
-  `cmd_lab2` 的 `eval()` 用户输入（views.py:456）是代码注入（CWE-94），本 spec 未立
-  code_injection 类别，留待后续与 SSTI 盲区一起处理；
-  deserialization（pickle 族，pygoat insec_des_lab，CWE-502）同样留待后续类别扩展；
-  `challenge/views.py:81` 的 subprocess 候选可控性存疑，未入 GT，交验证层判定。
+- pygoat 实测补充（2026-08-16）：**SSTI 是 semgrep `auto` 规则集的盲区**，且 pygoat 的
+  SSTI lab 是「用户内容写入模板文件再渲染」的间接形态——静态规则（含 tree-sitter）
+  均难直接覆盖；tree-sitter 自写规则**待出现真实 `render_template_string` 靶场再启动**
+  （评测先行：规则改动必须有靶场证明收益，避免自己出题自己答）。
+- code_injection（CWE-94）与 deserialization（CWE-502）已随后续类别扩展落地：
+  pygoat 八类范围 GT 12 项，full 1.000/0FP（3.59M token）。
+- `challenge/views.py:81` 的 subprocess 候选可控性存疑，未入 GT；验证层实测判
+  false_positive（container_id 来自数据库），与人工判断一致。
