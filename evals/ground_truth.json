@@ -1,0 +1,5 @@
+[
+  {"path": "app.py", "category": "sql_injection", "line": 19},
+  {"path": "app.py", "category": "ssrf", "line": 27},
+  {"path": "app.py", "category": "path_traversal", "line": 36}
+]
