@@ -2,5 +2,8 @@
   {"path": "introduction/views.py", "category": "sql_injection", "line": 158},
   {"path": "introduction/views.py", "category": "sql_injection", "line": 864},
   {"path": "introduction/views.py", "category": "path_traversal", "line": 927},
-  {"path": "introduction/views.py", "category": "ssrf", "line": 963}
+  {"path": "introduction/views.py", "category": "ssrf", "line": 963},
+  {"path": "introduction/views.py", "category": "xss", "line": 290},
+  {"path": "introduction/views.py", "category": "command_injection", "line": 430},
+  {"path": "introduction/mitre.py", "category": "command_injection", "line": 233}
 ]

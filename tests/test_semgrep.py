@@ -137,6 +137,36 @@ def test_registry_rule_families_map_to_categories():
     assert [c.category for c in cands] == ["sql_injection", "ssrf", "path_traversal"]
 
 
+def test_v2_rule_families_map_to_new_categories():
+    """v2 类别扩展：pygoat 实测归纳的真实 check_id 样本。"""
+    sample = {
+        "results": [
+            {"check_id": "python.django.security.audit.xss.direct-use-of-httpresponse.direct-use-of-httpresponse",
+             "path": "views.py", "start": {"line": 290}, "end": {"line": 290},
+             "extra": {"message": "m", "lines": "s", "metadata": {}}},
+            {"check_id": "python.django.security.injection.command.subprocess-injection.subprocess-injection",
+             "path": "views.py", "start": {"line": 430}, "end": {"line": 430},
+             "extra": {"message": "m", "lines": "s", "metadata": {}}},
+            {"check_id": "python.lang.security.dangerous-subprocess-use.dangerous-subprocess-use",
+             "path": "views.py", "start": {"line": 431}, "end": {"line": 431},
+             "extra": {"message": "m", "lines": "s", "metadata": {}}},
+            {"check_id": "python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+             "path": "views.py", "start": {"line": 432}, "end": {"line": 432},
+             "extra": {"message": "m", "lines": "s", "metadata": {}}},
+            {"check_id": "python.ssti.security.server-side-template-injection",
+             "path": "views.py", "start": {"line": 995}, "end": {"line": 995},
+             "extra": {"message": "m", "lines": "s", "metadata": {}}},
+        ]
+    }
+    cands = make_gen(FakeRunner(stdout=json.dumps(sample))).run(Path("t"))
+    by_line = {c.start_line: c for c in cands}
+    assert by_line[290].category == "xss"
+    assert by_line[430].cwe == "CWE-78"
+    # 430/431/432 同类相邻 → dedup 合一
+    assert sorted(c.start_line for c in cands) == [290, 430, 995]
+    assert by_line[995].category == "ssti"
+
+
 def test_duplicate_rules_on_same_sink_are_deduped():
     """django/flask 两套 registry 规则常同时命中同一 sink（同行或相邻行）→ 合并为一个候选。"""
     sample = {

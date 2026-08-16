@@ -20,7 +20,7 @@
    │                       只读沙箱 + --output-schema 强制 JSON + 临时 CODEX_HOME 注入 provider
    ▼
 ④ 报告                     verdict 三态 / CWE / taint_path(file:line) / confidence / poc_idea
-                           Markdown（人读）+ JSON（机器消费），含分层 token 成本与耗时
+                           Markdown + JSON + SARIF（机器消费），含分层 token 成本与耗时
 ```
 
 ## 快速开始
@@ -72,21 +72,28 @@ tiny_app 靶场（三类漏洞各一）**全漏斗真实运行**结果（DeepSee
 - 三类漏洞全部 `confirmed`（high 置信、完整 file:line 污点链、可执行 PoC）；唯一 GT 外候选（`debug=True`）被分诊/验证层正确清除——漏斗的价值直接可读。
 - **验证层是成本大头**（codex agent 多轮工具调用，单候选平均 ~10 万 token，其中大部分可命中缓存）；先用 `--max-candidates` 小规模试跑，分诊模型选便宜的。
 
-### pygoat（第一里程碑，已达成）
+### pygoat（第一里程碑 + v2 类别扩展）
 
-大靶场 pygoat（Django，80 个 Python 文件，135 个 semgrep 候选）。GT 4 项（views.py 的 2×SQLi / 1×SSRF / 1×路径穿越），`--categories sql_injection,ssrf,path_traversal` 限定 v1 三类范围（全量验证需 ~1850 万 token，范围过滤是成本控制刚需）：
+大靶场 pygoat（Django，80 个 Python 文件，135 个 semgrep 候选）。v2 起类别注册表扩展到六类（新增 命令注入 CWE-78、XSS CWE-79、SSTI CWE-1336），GT 7 项：
 
 | 漏斗层 | 召回率 | 误报数 | token 成本 | 耗时(s) |
 |---|---|---|---|---|
-| semgrep | 1.000 | 0 | 0 | 10.5 |
-| +triage | 1.000 | 0 | 3,089 | 22.1 |
-| full | 1.000 | 0 | 1,523,226 | 413.8 |
+| semgrep | 1.000 | 1 | 0 | 10.6 |
+| +triage | 1.000 | 1 | 8,185 | 48.8 |
+| full | **1.000** | **0** | 3,342,950 | 844.1 |
 
-6 个三类候选全部 `confirmed`/high，污点链从 Django 路由注册（urls.py）一路追到 sink——可达性分析扎实。
+v1 三类范围（6 候选）：full 1.000/0FP，1.52M token / 414s——污点链自 Django 路由注册追到 sink。
 
-全量分诊观测（135 候选不过滤）：keep 80 / drop 55（**砍削 40%**，94k token / 439s），三类 6 候选**零漏杀**。unknown 类（pygoat 的 SSTI/RCE/XSS 等）保留 74 个属 fail-open 保守行为——它们是范围外真漏洞，交给 v2 的类别扩展。
+v2 六类范围（14 候选）亮点是**逐条鉴别力**而非一刀切：
+- `challenge/views.py:81` subprocess 候选被验证层正确判 false_positive（`container_id` 来自数据库而非 HTTP 参数）；
+- `mitre.py:233`（用户可控 `ip` 拼接 `nmap` + `shell=True`）被挖出并 confirmed；
+- 4 个 XSS 候选三种归宿：1 confirmed（真实反射点）、2 false_positive（audit 级弱信号规则误报）、1 被分诊砍——同文件同类多点位冗余检出保住了召回。
 
-**第一条里程碑：✅ pygoat 上三类漏洞全部找到（召回 1.000）且误报可控（0）。**
+已知盲区（记录于 `.scratch/gloscope-v2/spec.md`）：**SSTI 在 semgrep `auto` 规则集下零候选**（tree-sitter 自写规则的直接依据）；`eval()` 代码注入（CWE-94）与反序列化（CWE-502）类别留待后续扩展。
+
+全量分诊观测（135 候选不过滤）：keep 80 / drop 55（**砍削 40%**，94k token / 439s）。
+
+**第一条里程碑：✅ pygoat 上三类漏洞全部找到（召回 1.000）且误报可控（0）；v2 扩展到六类后保持 1.000/0。**
 
 ## 设计决策
 
@@ -106,9 +113,10 @@ tiny_app 靶场（三类漏洞各一）**全漏斗真实运行**结果（DeepSee
 ## 目标与范围
 
 - 目标代码：Python Web（Flask / FastAPI / Django）
-- 漏洞类型：SQL 注入、SSRF、路径穿越
-- 靶场：内置 tiny_app（见 `evals/fixtures/tiny_app/README.md`）、pygoat、vulpy、真实 CVE 修复 commit 回放
-- v2 候选：tree-sitter 自写规则补盲区、MCP 专用工具（调用图查询）、动态 PoC 执行、diff-aware 增量扫描、SARIF 输出
+- 漏洞类型：SQL 注入、SSRF、路径穿越、命令注入、XSS（v2 扩展；SSTI 已入注册表待规则补盲区）
+- 报告格式：Markdown / JSON / **SARIF 2.1.0**（v2 新增，confirmed→error / inconclusive→warning，可直接上传 GitHub Code Scanning）
+- 靶场：内置 tiny_app（见 `evals/fixtures/tiny_app/README.md`）、pygoat（GT 7 项）、vulpy、真实 CVE 修复 commit 回放
+- v2 已落地：SARIF 输出、类别注册表扩展；v2 候选：tree-sitter 自写规则补盲区（SSTI 实测零候选）、MCP 专用工具（调用图查询）、动态 PoC 执行、diff-aware 增量扫描、code_injection（CWE-94）/deserialization（CWE-502）类别
 
 ## 项目结构
 

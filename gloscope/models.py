@@ -24,6 +24,12 @@ VULN_CATEGORIES: dict[str, tuple[str, tuple[str, ...]]] = {
                                   "tainted-sql-string")),
     "ssrf": ("CWE-918", ("ssrf", "request-forgery")),
     "path_traversal": ("CWE-22", ("path-traversal", "traversal")),
+    # v2 扩展（check_id 片段自 pygoat 真实 semgrep 输出归纳）
+    "command_injection": ("CWE-78", ("command-injection", "os-command-injection",
+                                      "subprocess-injection", "subprocess-shell-true",
+                                      "dangerous-subprocess-use")),
+    "xss": ("CWE-79", ("xss", "cross-site-scripting")),
+    "ssti": ("CWE-1336", ("ssti", "server-side-template-injection")),
 }
 
 CWE_TO_CATEGORY: dict[str, str] = {
