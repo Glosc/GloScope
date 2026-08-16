@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -77,8 +78,14 @@ def _real_runner(argv: list[str], cwd: Path, env: dict, timeout: float) -> tuple
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def _write_codex_home(home: Path, cfg: Config) -> None:
-    """生成 codex model_providers 配置：编排层与分诊层共用同一 provider 凭据。"""
+def _write_codex_home(cfg: Config) -> Path:
+    """生成 codex model_providers 配置：编排层与分诊层共用同一 provider 凭据。
+
+    CODEX_HOME 放用户目录下（~/.gloscope/codex-home）：codex 拒绝在系统临时目录
+    创建 PATH aliases（helper binaries），且不能动用户真实的 ~/.codex。config.toml
+    幂等覆盖写入。
+    """
+    home = Path.home() / ".gloscope" / "codex-home"
     home.mkdir(parents=True, exist_ok=True)
     (home / "config.toml").write_text(
         f"""[model_providers.{PROVIDER_ID}]
@@ -89,6 +96,7 @@ wire_api = "{cfg.wire_api}"
 """,
         encoding="utf-8",
     )
+    return home
 
 
 def _parse_tokens(stdout: str) -> tuple[int, int]:
@@ -118,7 +126,8 @@ class CodexVerifier:
         runner: Runner | None = None,
     ) -> None:
         self._cfg = cfg
-        self._codex = codex_path
+        # Windows 下 npm 安装的 codex 是 codex.cmd，subprocess 不解析裸名 → which 预解析
+        self._codex = shutil.which(codex_path) or codex_path
         self._run = runner or _real_runner
         self._version: str | None = None  # 缓存 --version 结果；"" 表示探测失败
 
@@ -172,7 +181,7 @@ class CodexVerifier:
         )
         with tempfile.TemporaryDirectory(prefix="gloscope-codex-") as tmp:
             tmpdir = Path(tmp)
-            _write_codex_home(tmpdir / "codex-home", self._cfg)
+            codex_home = _write_codex_home(self._cfg)
             schema_path = tmpdir / "output-schema.json"
             schema_path.write_text(
                 json.dumps(OUTPUT_SCHEMA, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -191,7 +200,7 @@ class CodexVerifier:
                 "-m", self._cfg.verify_model,
                 prompt,
             ]
-            env = {**os.environ, "CODEX_HOME": str(tmpdir / "codex-home"),
+            env = {**os.environ, "CODEX_HOME": str(codex_home),
                    ENV_KEY: self._cfg.api_key}
             returncode, stdout, stderr = self._run(argv, target, env, self._cfg.verify_timeout)
 

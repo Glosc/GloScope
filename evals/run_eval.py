@@ -48,6 +48,9 @@ def run_eval(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-triage", action="store_true")
     parser.add_argument("--skip-verify", action="store_true")
     parser.add_argument("--max-candidates", type=int)
+    parser.add_argument("--semgrep-path", default="semgrep",
+                        help="semgrep 可执行文件路径（如 venv 内的 semgrep）")
+    parser.add_argument("--codex-path", default="codex", help="codex 可执行文件路径")
     args = parser.parse_args(argv)
 
     ground_truth = load_ground_truth(args.ground_truth)
@@ -70,6 +73,7 @@ def run_eval(argv: list[str] | None = None) -> int:
             scan_argv.append("--skip-verify")
         if args.max_candidates:
             scan_argv += ["--max-candidates", str(args.max_candidates)]
+        scan_argv += ["--semgrep-path", args.semgrep_path, "--codex-path", args.codex_path]
         rc = cli_main(scan_argv)
         if rc != 0:
             return rc

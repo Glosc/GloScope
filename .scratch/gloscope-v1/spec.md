@@ -65,7 +65,7 @@ Status: ready-for-agent
 - **候选去重与覆盖**（真实冒烟后新增的决策）：semgrep 以 `--no-git-ignore` 扫描（审计要覆盖保证）；同文件同类别 3 行内的多规则命中（p/flask 与 p/django 规则族重叠）合并为一个候选；registry metadata CWE 错挂时（如 tainted-sql-string → CWE-704）以规则族推断为准。
 - **验证输出契约**（JSON schema 核心字段）：`verdict` ∈ {confirmed, false_positive, inconclusive}；`cwe`（如 CWE-89）；`taint_path` 为 file:line 步骤数组；`confidence` ∈ {high, medium, low}；`poc_idea`；`explanation`。
 - **分诊输出契约**：薄输出——`keep`（bool）+ `reason`（一行）。
-- **codex 集成方式**：不 fork 源码、不引 SDK，`codex exec` 子进程 + 临时配置注入；具体 flag 组合以本机 `codex exec --help` 实测为准，spec 只锁定「自包含 prompt + 结构化输出 + 只读沙箱」三个不变量。
+- **codex 集成方式**：不 fork 源码、不引 SDK，`codex exec` 子进程 + 临时配置注入；具体 flag 组合以本机 `codex exec --help` 实测为准，spec 只锁定「自包含 prompt + 结构化输出 + 只读沙箱」三个不变量。真实运行补充的约束（2026-08 实测，codex-cli 0.147）：`model_providers.wire_api` 仅支持 `"responses"`（chat 已移除），网关需支持 `/v1/responses`；`CODEX_HOME` 不能位于系统临时目录（codex 拒绝创建 helper binaries），固定用 `~/.gloscope/codex-home`；工具可执行文件需 `shutil.which` 预解析（Windows 下 npm/venv 均为 .cmd/.exe shim）。
 - **失败策略**：fail-open——分诊调用失败按 keep 处理；验证失败/超时输出 inconclusive + error 轨迹（Finding.status 为 `error`）；semgrep 失败直接终止本次扫描（无候选则无意义）。
 - **评测口径**：ground truth 按「文件 × 漏洞类别」标注；recall = 被 confirmed 的 ground truth 项 / 全部项；误报数 = confirmed 但不在 ground truth 的候选数；token 成本按层累计 usage；耗时按层计时（漏斗各行为到该层为止的累计值）。靶场 v1 以 vendored 小 fixture 起步（pygoat 作为可选外部靶场），保证评测离线可跑。
 

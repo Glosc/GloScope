@@ -118,11 +118,12 @@ base_url = "https://api.deepseek.com"   # 任意 OpenAI-compatible
 api_key  = "sk-..."                     # 用户自填（或环境变量 GLOSCOPE_API_KEY）
 
 [models]
-triage_model = "deepseek-chat"          # 分诊：便宜快
-verify_model = "deepseek-reasoner"      # 验证：强模型（默认与分诊相同）
+triage_model = "deepseek-chat"          # 分诊：便宜快（走 chat completions）
+verify_model = "deepseek-reasoner"      # 验证：强模型（默认与分诊相同；走 Responses API）
 
 # 可选
-[provider]                              # wire_api 默认 "chat"
+[provider]
+# wire_api 默认 "responses"——codex 0.147+ 硬性要求，网关需支持 /v1/responses 端点
 [limits]
 triage_timeout = 60.0                   # 分诊单次调用超时（秒）
 verify_timeout = 600.0                  # codex exec 单候选超时（秒）

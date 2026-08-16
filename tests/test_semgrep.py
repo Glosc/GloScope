@@ -183,6 +183,21 @@ def test_semgrep_missing_is_clear_error():
         make_gen(runner).run(Path("target"))
 
 
+def test_semgrep_name_resolved_via_pathext(tmp_path, monkeypatch):
+    """Windows：npm/venv 工具常是 .cmd/.exe shim，subprocess 不解析裸名 → which 预解析。"""
+    monkeypatch.setattr(
+        "gloscope.semgrep_runner.shutil.which", lambda n: r"C:\tools\semgrep.EXE"
+    )
+    runner = FakeRunner(stdout=json.dumps({"results": [], "errors": []}))
+    SemgrepCandidateGenerator(semgrep_path="semgrep", runner=runner).run(tmp_path)
+    assert runner.calls[0][0][0] == r"C:\tools\semgrep.EXE"
+    # which 找不到时保留原名（错误信息由 FileNotFoundError 路径统一给出）
+    monkeypatch.setattr("gloscope.semgrep_runner.shutil.which", lambda n: None)
+    runner2 = FakeRunner(stdout=json.dumps({"results": [], "errors": []}))
+    SemgrepCandidateGenerator(semgrep_path="semgrep", runner=runner2).run(tmp_path)
+    assert runner2.calls[0][0][0] == "semgrep"
+
+
 def test_nonzero_exit_is_error_with_stderr():
     runner = FakeRunner(returncode=2, stderr="unknown config")
     with pytest.raises(SemgrepError, match="unknown config"):
@@ -193,3 +208,33 @@ def test_invalid_json_output_is_error():
     runner = FakeRunner(stdout="not json at all")
     with pytest.raises(SemgrepError, match="JSON"):
         make_gen(runner).run(Path("target"))
+
+
+def test_snippet_read_from_source_file_not_extra_lines(tmp_path):
+    """真实环境实测：semgrep extra.lines 可能返回与代码无关的固定文本（如 'requires login'）。
+    候选片段必须以目标源文件为准（唯一事实源），extra.lines 仅作文件缺失时的回退。
+    """
+    lines = ["line %d" % i for i in range(1, 31)]
+    lines[18] = '    query = "SELECT * FROM users WHERE id = \'" + uid + "\'"'  # 第 19 行
+    (tmp_path / "app.py").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    raw = {
+        "results": [
+            {"check_id": "python.flask.security.injection.tainted-sql-string.tainted-sql-string",
+             "path": "app.py", "start": {"line": 19}, "end": {"line": 19},
+             "extra": {"message": "m", "lines": "requires login", "metadata": {}}},
+        ]
+    }
+    cands = make_gen(FakeRunner(stdout=json.dumps(raw))).run(tmp_path)
+    assert "SELECT * FROM users" in cands[0].snippet
+    assert cands[0].snippet != "requires login"
+
+
+def test_snippet_falls_back_to_extra_lines_when_file_missing(tmp_path):
+    raw = {
+        "results": [
+            {"check_id": "r", "path": "gone.py", "start": {"line": 3}, "end": {"line": 3},
+             "extra": {"message": "m", "lines": "fallback snippet", "metadata": {}}},
+        ]
+    }
+    cands = make_gen(FakeRunner(stdout=json.dumps(raw))).run(tmp_path)
+    assert cands[0].snippet == "fallback snippet"

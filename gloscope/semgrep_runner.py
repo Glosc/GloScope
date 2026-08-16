@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Callable, TypeAlias
@@ -38,10 +39,24 @@ class SemgrepCandidateGenerator:
         timeout: float = 300.0,
         runner: Runner | None = None,
     ) -> None:
-        self._semgrep = semgrep_path
+        # Windows 下 npm/venv 工具多为 .cmd/.exe shim，subprocess 不解析裸名 → which 预解析
+        self._semgrep = shutil.which(semgrep_path) or semgrep_path
         self._rules = rules
         self._timeout = timeout
         self._run = runner or _real_runner
+
+    @staticmethod
+    def _read_snippet(target: Path, rel_path: str, start: int, end: int) -> str | None:
+        """extra.lines 实测不可靠（可能返回无关固定文本）；以源文件为准。"""
+        try:
+            lines = (target / rel_path).read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+        except OSError:
+            return None
+        if 1 <= start <= end <= len(lines):
+            return "\n".join(lines[start - 1 : end])
+        return None
 
     def run(self, target: Path) -> list[Candidate]:
         target = Path(target)
@@ -79,13 +94,19 @@ class SemgrepCandidateGenerator:
             ):
                 cwe = inferred
             extra = item.get("extra", {})
+            start_line = int(item.get("start", {}).get("line", 0))
+            end_line = int(item.get("end", {}).get("line", 0))
+            path = str(item.get("path", ""))
+            snippet = self._read_snippet(target, path, start_line, end_line)
+            if snippet is None:
+                snippet = str(extra.get("lines", ""))
             candidates.append(
                 Candidate(
                     check_id=check_id,
-                    path=str(item.get("path", "")),
-                    start_line=int(item.get("start", {}).get("line", 0)),
-                    end_line=int(item.get("end", {}).get("line", 0)),
-                    snippet=str(extra.get("lines", "")),
+                    path=path,
+                    start_line=start_line,
+                    end_line=end_line,
+                    snippet=snippet,
                     message=str(extra.get("message", "")),
                     cwe=cwe,
                     category=infer_category(check_id, cwe),

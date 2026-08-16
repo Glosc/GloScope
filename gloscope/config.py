@@ -20,7 +20,9 @@ class Config:
     api_key: str
     triage_model: str
     verify_model: str
-    wire_api: str = "chat"
+    # codex 0.147+ 仅支持 "responses"（model_providers 的 chat 已移除）；
+    # 分诊层不受影响（直连 chat completions）
+    wire_api: str = "responses"
     triage_timeout: float = 60.0
     verify_timeout: float = 600.0
 
@@ -76,7 +78,7 @@ def load_config(path: Path | str | None = None) -> Config:
         api_key=str(api_key),
         triage_model=str(triage_model),
         verify_model=str(models.get("verify_model") or triage_model),
-        wire_api=str(provider.get("wire_api", "chat")),
+        wire_api=str(provider.get("wire_api", "responses")),
         triage_timeout=float(limits.get("triage_timeout", 60.0)),
         verify_timeout=float(limits.get("verify_timeout", 600.0)),
     )

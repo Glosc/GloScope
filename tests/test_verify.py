@@ -82,7 +82,8 @@ def make_verifier(runner, **kw):
     return CodexVerifier(CFG, runner=runner, **kw)
 
 
-def test_codex_argv_readonly_sandbox_schema_and_model(tmp_path):
+def test_codex_argv_readonly_sandbox_schema_and_model(tmp_path, monkeypatch):
+    monkeypatch.setattr("gloscope.verify.shutil.which", lambda n: None)  # 环境无关
     runner = FakeCodexRunner()
     make_verifier(runner).verify(CAND, tmp_path)
     argv = runner.exec_calls[0]["argv"]
@@ -107,12 +108,14 @@ def test_codex_home_injects_model_provider_config(tmp_path):
     env = runner.exec_calls[0]["env"]
     home = Path(env["CODEX_HOME"])
     assert env["GLOSCOPE_API_KEY"] == _FAKE_KEY
-    assert home != Path.home() / ".codex"  # 隔离的临时 CODEX_HOME
+    assert home == Path.home() / ".gloscope" / "codex-home"  # 独立目录，不碰 ~/.codex
+    import tempfile
+    assert not str(home).startswith(str(tempfile.gettempdir()))  # codex 拒绝 temp 下的 CODEX_HOME
     cfg = tomllib.loads(runner.exec_calls[0]["codex_config"])
     prov = cfg["model_providers"]["gloscope"]
     assert prov["base_url"] == "https://api.deepseek.com"
     assert prov["env_key"] == "GLOSCOPE_API_KEY"
-    assert prov["wire_api"] == "chat"
+    assert prov["wire_api"] == "responses"  # codex 0.147+ 硬性要求
 
 
 def test_prompt_is_self_contained(tmp_path):
@@ -195,7 +198,8 @@ def test_version_probe_runs_once_and_blocks_exec_on_failure(tmp_path):
     assert len([c for c in runner.calls if "--version" in c["argv"]]) == 1
 
 
-def test_version_probe_precedes_exec_once(tmp_path):
+def test_version_probe_precedes_exec_once(tmp_path, monkeypatch):
+    monkeypatch.setattr("gloscope.verify.shutil.which", lambda n: None)  # 环境无关
     runner = FakeCodexRunner()
     verifier = make_verifier(runner)  # 流水线内单个 verifier 服务全部候选
     verifier.verify(CAND, tmp_path)
@@ -204,3 +208,15 @@ def test_version_probe_precedes_exec_once(tmp_path):
     assert len(version_calls) == 1  # 多候选只探测一次
     assert len(runner.exec_calls) == 2
     assert runner.calls[0]["argv"][:2] == ["codex", "--version"]
+
+
+def test_codex_name_resolved_via_pathext(tmp_path, monkeypatch):
+    """Windows：npm 安装的 codex 是 codex.cmd，subprocess 不解析裸名 → which 预解析。"""
+    monkeypatch.setattr("gloscope.verify.shutil.which", lambda n: r"C:\nodejs\codex.CMD")
+    runner = FakeCodexRunner()
+    CodexVerifier(CFG, codex_path="codex", runner=runner).verify(CAND, tmp_path)
+    assert runner.calls[0]["argv"][0] == r"C:\nodejs\codex.CMD"
+    monkeypatch.setattr("gloscope.verify.shutil.which", lambda n: None)
+    runner2 = FakeCodexRunner()
+    CodexVerifier(CFG, codex_path="codex", runner=runner2).verify(CAND, tmp_path)
+    assert runner2.calls[0]["argv"][0] == "codex"
