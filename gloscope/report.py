@@ -220,6 +220,9 @@ def report_from_json(text: str) -> ScanReport:
                 taint_path=list(v.get("taint_path", [])),
                 confidence=v.get("confidence", "low"),
                 poc_idea=v.get("poc_idea", ""), explanation=v.get("explanation", ""),
+                poc_method=v.get("poc_method", ""), poc_path=v.get("poc_path", ""),
+                poc_query=v.get("poc_query", ""), poc_body=v.get("poc_body", ""),
+                poc_signal=v.get("poc_signal", ""),
                 error=v.get("error"), model=v.get("model", ""),
                 tokens_in=v.get("tokens_in", 0), tokens_out=v.get("tokens_out", 0),
             )

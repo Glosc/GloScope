@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, TypeAlias
 
 from gloscope.config import Config, ConfigError, load_config
+from gloscope.dynamic import DynamicError, DynamicValidator, assert_loopback_target
 from gloscope.metrics import evaluate, format_table, load_ground_truth
 from gloscope.models import ScanReport
 from gloscope.pipeline import Pipeline, PipelineOptions
@@ -75,6 +76,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("report", help="scan 产生的 report.json")
     p_eval.add_argument("--ground-truth", default="evals/ground_truth.json",
                         help="ground truth JSON 路径")
+
+    p_dyn = sub.add_parser("check-dynamic", help="对 confirmed 发现执行声明式 PoC 差分复现")
+    p_dyn.add_argument("report", help="scan 产生的 report.json（需含 poc_* 字段）")
+    p_dyn.add_argument("--target-url", required=True,
+                       help="目标应用基址（仅允许环回：127.0.0.1/::1/localhost）")
+    p_dyn.add_argument("--timeout", type=float, default=10.0, help="单请求超时（秒）")
     return parser
 
 
@@ -138,10 +145,46 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_check_dynamic(args: argparse.Namespace) -> int:
+    try:
+        assert_loopback_target(args.target_url)
+        report = report_from_json(Path(args.report).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, KeyError, ValueError, DynamicError) as e:
+        print(f"输入错误: {e}", file=sys.stderr)
+        return 1
+
+    targets = [f for f in report.findings
+               if f.is_confirmed and f.verification
+               and f.verification.poc_path and f.verification.poc_method]
+    validator = DynamicValidator(timeout=args.timeout)
+    rows = []
+    reproduced = 0
+    for f in targets:
+        assert f.verification is not None
+        r = validator.check(f.verification, args.target_url)
+        reproduced += r.reproduced
+        rows.append((f, r))
+
+    print(f"动态复现: {reproduced}/{len(targets)}"
+          f"（confirmed 且含 PoC 规格共 {len(targets)} 项）\n")
+    print("| 位置 | 类别 | PoC | 复现 | 说明 |")
+    print("|---|---|---|---|---|")
+    for f, r in rows:
+        v = f.verification
+        assert v is not None
+        poc = f"{v.poc_method} {v.poc_path}" + (f"?{v.poc_query[:30]}" if v.poc_query else "")
+        note = r.error or r.evidence
+        print(f"| {f.candidate.location} | {f.candidate.category} | `{poc}` "
+              f"| {'✅' if r.reproduced else '❌'} | {note[:80]} |")
+    return 0
+
+
 def main(argv: list[str] | None = None, factory: PipelineFactory | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.command == "scan":
         return _cmd_scan(args, factory or _default_factory)
+    if args.command == "check-dynamic":
+        return _cmd_check_dynamic(args)
     return _cmd_eval(args)
 
 

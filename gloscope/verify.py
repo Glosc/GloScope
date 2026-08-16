@@ -44,8 +44,15 @@ OUTPUT_SCHEMA: dict = {
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         "poc_idea": {"type": "string", "description": "利用/验证思路；无则空字符串"},
         "explanation": {"type": "string", "description": "结论依据：可达性、净化情况等"},
+        # 动态 PoC 请求规格（扁平字段，空串=不适用）：执行器只发 HTTP，不执行代码
+        "poc_method": {"type": "string", "description": "HTTP 方法，如 GET/POST；不适用为空"},
+        "poc_path": {"type": "string", "description": "请求路径，如 /user；不适用为空"},
+        "poc_query": {"type": "string", "description": "查询串（不含 ?），如 id=' OR '1'='1"},
+        "poc_body": {"type": "string", "description": "请求体（form/JSON 文本）；无则空"},
+        "poc_signal": {"type": "string", "description": "差分信号：仅当漏洞被触发时出现在响应中的稳定子串"},
     },
-    "required": ["verdict", "cwe", "taint_path", "confidence", "poc_idea", "explanation"],
+    "required": ["verdict", "cwe", "taint_path", "confidence", "poc_idea", "explanation",
+                 "poc_method", "poc_path", "poc_query", "poc_body", "poc_signal"],
     "additionalProperties": False,
 }
 
@@ -71,6 +78,8 @@ PROMPT_TEMPLATE = """你是一名资深 Web 安全审计专家，正在验证一
 - confidence: "high" | "medium" | "low"
 - poc_idea: 如何构造请求验证（无则空字符串）
 - explanation: 结论依据（可达性、净化情况等）
+- poc_method/poc_path/poc_query/poc_body/poc_signal: 若 confirmed 且可远程触发，
+  给出最小差分请求规格与信号（signal 选仅在漏洞触发时出现的稳定子串）；否则全空串。
 
 若附有「HTTP 入口索引」，直接引用其中的路由入口（file:line），不必再搜索路由注册。"""
 
@@ -271,6 +280,11 @@ class CodexVerifier:
                 confidence=raw.get("confidence", "low"),
                 poc_idea=str(raw.get("poc_idea", "")),
                 explanation=str(raw.get("explanation", "")),
+                poc_method=str(raw.get("poc_method", "")).upper(),
+                poc_path=str(raw.get("poc_path", "")),
+                poc_query=str(raw.get("poc_query", "")),
+                poc_body=str(raw.get("poc_body", "")),
+                poc_signal=str(raw.get("poc_signal", "")),
                 model=self._cfg.verify_model,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,

@@ -115,6 +115,12 @@ v1 三类范围（6 候选）：full 1.000/0FP，1.52M token / 414s——污点�
 
 **调用图辅助（v2 落地）**：原 MCP 工具方案实测被 codex exec 静默忽略（`[mcp_servers]` 仅 TUI 生效，server 协议测试全过、模块保留备用），退化为 **HTTP 入口索引注入 prompt**（`gloscope/callgraph.py` 静态提取 Flask/Django 路由，`--no-callgraph` 可关）。单候选控制变量对比：工具调用 **96 → 21（-78%）**、input -47%，召回保持；pygoat 八类全量召回/误报不退化（全量 token/耗时受运行随机性主导，省耗结论仅在控制变量下成立）。详见 `.scratch/gloscope-v2/token-analysis.md`。
 
+### 动态 PoC 复现（v2 落地）
+
+验证层输出契约新增声明式 PoC 请求规格（`poc_method/path/query/body/signal` 扁平字段），`gloscope check-dynamic <report.json> --target-url <环回地址>` 用自带 HTTP 客户端做**差分复现**（PoC 请求 vs 基线请求的信号对比）。安全边界：PoC 是请求规格而非可执行代码；目标硬编码环回白名单（127.0.0.1/::1/localhost，localhost 需 DNS 全环回）、仅 http/https、禁跨域重定向；必须显式传 `--target-url`。范围（用户批准）：v1 仅 tiny_app/vulpy（Flask，用户手动启动），pygoat 保持静态。
+
+tiny_app 实测（agent 生成的 PoC 规格直接可用）：**2/3 动态复现**——SQL 注入（`id=' OR '1'='1` → 响应含 `"admin"`）与路径穿越（`name=../../app.py` → 响应含源码标记）差分成立；SSRF 未复现属 agent 信号设计与靶场 error 页不匹配（执行器行为正确）。执行器实测修复两项：未编码空格的百分号编码、预编码串的双重编码防护。
+
 ### vulpy（第三靶场，Flask/SQLite）
 
 vulpy 的 `bad/`（漏洞版）与 `good/`（安全版）同名对照是天然的误报考验——semgrep 在两边都会报格式相似的 sink：
@@ -150,7 +156,7 @@ vulpy 的 `bad/`（漏洞版）与 `good/`（安全版）同名对照是天然�
 - 漏洞类型：SQL 注入、SSRF、路径穿越、命令注入、XSS、代码注入（CWE-94）、反序列化（CWE-502）；SSTI 已入注册表待规则补盲区（pygoat 的 SSTI 为文件写入型，静态规则难覆盖，待真实 `render_template_string` 靶场）
 - 报告格式：Markdown / JSON / **SARIF 2.1.0**（v2 新增，confirmed→error / inconclusive→warning，可直接上传 GitHub Code Scanning）
 - 靶场：内置 tiny_app（见 `evals/fixtures/tiny_app/README.md`）、pygoat（GT 7 项）、vulpy（GT 1 项，good/bad 对照）、真实 CVE 修复 commit 回放
-- v2 已落地：SARIF 输出、类别注册表扩展（3→8 类）、vulpy 靶场、diff-aware 增量扫描（`--diff-base`，git diff 变更文件过滤，拿不到 diff 即报错不盲目全仓）、CVE 回放、自写盲区规则（`gloscope/rules/`）、调用图入口索引注入（`--no-callgraph` 可关）；v2 候选：动态 PoC 执行
+- v2 已落地：SARIF 输出、类别注册表扩展（3→8 类）、vulpy 靶场、diff-aware 增量扫描（`--diff-base`，git diff 变更文件过滤，拿不到 diff 即报错不盲目全仓）、CVE 回放、自写盲区规则（`gloscope/rules/`）、调用图入口索引注入（`--no-callgraph` 可关）、动态 PoC 复现（`check-dynamic`，环回白名单）
 
 ## 项目结构
 

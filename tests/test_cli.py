@@ -126,3 +126,28 @@ def test_eval_bad_report_fails(tmp_path, capsys):
     rc = main(["eval", str(report_path), "--ground-truth", str(bad_gt)])
     assert rc == 1
     assert "rce" in capsys.readouterr().err
+
+
+def test_check_dynamic_rejects_non_loopback(tmp_path, capsys):
+    report_path = tmp_path / "report.json"
+    report_path.write_text(render_json(sample_report()), encoding="utf-8")
+    rc = main(["check-dynamic", str(report_path), "--target-url", "http://example.com"])
+    assert rc == 1
+    assert "环回" in capsys.readouterr().err
+
+
+def test_check_dynamic_runs_against_unreachable_loopback(tmp_path, capsys):
+    from gloscope.models import Verification as V
+
+    rep = sample_report()
+    rep.findings[0].verification = V(
+        "confirmed", "CWE-89", [], "high",
+        poc_method="GET", poc_path="/user", poc_query="id=x", poc_signal="admin")
+    report_path = tmp_path / "report.json"
+    report_path.write_text(render_json(rep), encoding="utf-8")
+    # 环回无服务：连接失败被记录为错误，命令仍成功返回
+    rc = main(["check-dynamic", str(report_path),
+               "--target-url", "http://127.0.0.1:59999", "--timeout", "2"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "动态复现: 0/1" in out and "❌" in out

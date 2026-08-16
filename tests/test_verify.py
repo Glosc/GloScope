@@ -43,6 +43,11 @@ GOOD_OUTPUT = {
     "confidence": "high",
     "poc_idea": "id 参数传特殊构造的输入观察查询结构变化",
     "explanation": "请求参数未经净化直接进入查询构造。",
+    "poc_method": "GET",
+    "poc_path": "/user",
+    "poc_query": "id=' OR '1'='1",
+    "poc_body": "",
+    "poc_signal": "admin",
 }
 
 
@@ -172,13 +177,17 @@ def test_prompt_travels_via_stdin_not_argv(tmp_path):
 def test_output_schema_file_strict(tmp_path):
     schema = OUTPUT_SCHEMA
     assert set(schema["required"]) == {
-        "verdict", "cwe", "taint_path", "confidence", "poc_idea", "explanation"
+        "verdict", "cwe", "taint_path", "confidence", "poc_idea", "explanation",
+        # 动态 PoC（B1）：扁平字段，空串=不适用（codex 严格模式不友好于嵌套 nullable）
+        "poc_method", "poc_path", "poc_query", "poc_body", "poc_signal",
     }
     assert schema["additionalProperties"] is False
     assert set(schema["properties"]["verdict"]["enum"]) == {
         "confirmed", "false_positive", "inconclusive"
     }
     assert set(schema["properties"]["confidence"]["enum"]) == {"high", "medium", "low"}
+    for f in ("poc_method", "poc_path", "poc_query", "poc_body", "poc_signal"):
+        assert schema["properties"][f]["type"] == "string"
 
 
 def test_parses_confirmed_verification_with_tokens(tmp_path):
@@ -198,6 +207,9 @@ def test_parses_confirmed_verification_with_tokens(tmp_path):
     assert v.error is None
     assert (v.tokens_in, v.tokens_out) == (8000, 100)  # 两个 turn 累计
     assert v.model == "deepseek-reasoner"
+    assert v.poc_method == "GET" and v.poc_path == "/user"
+    assert v.poc_query == "id=' OR '1'='1"
+    assert v.poc_signal == "admin"
 
 
 def test_nonzero_exit_is_inconclusive_with_error(tmp_path):

@@ -109,6 +109,12 @@ class Verification:
     confidence: Confidence = "medium"
     poc_idea: str = ""
     explanation: str = ""
+    # 动态 PoC 请求规格（扁平，空串=不适用），由 DynamicValidator 执行
+    poc_method: str = ""
+    poc_path: str = ""
+    poc_query: str = ""
+    poc_body: str = ""
+    poc_signal: str = ""
     error: str | None = None  # 非 None 表示验证过程本身出错（verdict 为 inconclusive）
     model: str = ""
     tokens_in: int = 0
