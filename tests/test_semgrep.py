@@ -276,3 +276,28 @@ def test_snippet_falls_back_to_extra_lines_when_file_missing(tmp_path):
     }
     cands = make_gen(FakeRunner(stdout=json.dumps(raw))).run(tmp_path)
     assert cands[0].snippet == "fallback snippet"
+
+
+def test_diff_base_limits_semgrep_to_changed_files(tmp_path, monkeypatch):
+    """diff-aware 增量扫描：--diff-base 时只把 git 变更文件交给 semgrep。"""
+    changed = ["app.py", "lib/util.py"]
+    monkeypatch.setattr(
+        "gloscope.semgrep_runner._git_changed_files", lambda target, base: changed
+    )
+    runner = FakeRunner(stdout=json.dumps({"results": [], "errors": []}))
+    SemgrepCandidateGenerator(diff_base="origin/main", runner=runner).run(Path("t"))
+    argv = runner.calls[0][0]
+    tail = argv[argv.index("--config") + 2:]  # --config X 之后的路径参数
+    assert tail == changed
+
+
+def test_diff_base_git_failure_is_clear_error(tmp_path, monkeypatch):
+    def boom(target, base):
+        raise RuntimeError("not a git repository")
+
+    monkeypatch.setattr("gloscope.semgrep_runner._git_changed_files", boom)
+    runner = FakeRunner(stdout=json.dumps({"results": [], "errors": []}))
+    gen = SemgrepCandidateGenerator(diff_base="main", runner=runner)
+    with pytest.raises(SemgrepError, match="not a git repository"):
+        gen.run(Path("t"))
+    assert runner.calls == []  # 失败发生在 semgrep 之前

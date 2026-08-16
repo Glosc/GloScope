@@ -28,8 +28,11 @@ def _default_factory(
     semgrep_rules: str,
     semgrep_path: str,
     codex_path: str,
+    diff_base: str | None = None,
 ) -> Pipeline:
-    generator = SemgrepCandidateGenerator(semgrep_path=semgrep_path, rules=semgrep_rules)
+    generator = SemgrepCandidateGenerator(
+        semgrep_path=semgrep_path, rules=semgrep_rules, diff_base=diff_base
+    )
     triager = OpenAITriageClient(cfg) if cfg and not options.skip_triage else None
     verifier = CodexVerifier(cfg, codex_path=codex_path) if cfg and not options.skip_verify else None
     return Pipeline(generator, triager=triager, verifier=verifier, options=options)
@@ -53,6 +56,8 @@ def _build_parser() -> argparse.ArgumentParser:
                              "只让这些类别的候选进漏斗")
     p_scan.add_argument("--output-dir", default="reports", help="报告输出目录（默认 reports/）")
     p_scan.add_argument("--semgrep-rules", default="auto", help="semgrep 规则集（默认 auto）")
+    p_scan.add_argument("--diff-base", metavar="REF",
+                        help="增量扫描：只扫与该 git ref（如 origin/main）有差异的文件")
     p_scan.add_argument("--semgrep-path", default="semgrep", help="semgrep 可执行文件路径")
     p_scan.add_argument("--codex-path", default="codex", help="codex 可执行文件路径")
 
@@ -87,6 +92,7 @@ def _cmd_scan(args: argparse.Namespace, factory: PipelineFactory) -> int:
         semgrep_rules=args.semgrep_rules,
         semgrep_path=args.semgrep_path,
         codex_path=args.codex_path,
+        diff_base=args.diff_base,
     )
     try:
         report = pipeline.run(Path(args.target))

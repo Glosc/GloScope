@@ -45,10 +45,11 @@ EOF
 # 全漏斗扫描
 gloscope scan /path/to/pygoat --config config.local.toml
 
-# 旋钮：先小规模试跑 / 只跑部分层（semgrep-only 无需配置）/ 限定漏洞类别
+# 旋钮：先小规模试跑 / 只跑部分层（semgrep-only 无需配置）/ 限定漏洞类别 / 增量扫描
 gloscope scan TARGET --max-candidates 5
 gloscope scan TARGET --skip-triage --skip-verify
 gloscope scan TARGET --categories sql_injection,ssrf,path_traversal
+gloscope scan TARGET --diff-base origin/main        # CI 里只扫 PR 变更文件
 
 # 评测：固定靶场 + 四指标（召回率 / 误报数 / token 成本 / 耗时）+ 漏斗分层对比
 python evals/run_eval.py --live --config config.local.toml        # tiny_app 靶场
@@ -125,7 +126,7 @@ vulpy 的 `bad/`（漏洞版）与 `good/`（安全版）同名对照是天然�
 - 漏洞类型：SQL 注入、SSRF、路径穿越、命令注入、XSS、代码注入（CWE-94）、反序列化（CWE-502）；SSTI 已入注册表待规则补盲区（pygoat 的 SSTI 为文件写入型，静态规则难覆盖，待真实 `render_template_string` 靶场）
 - 报告格式：Markdown / JSON / **SARIF 2.1.0**（v2 新增，confirmed→error / inconclusive→warning，可直接上传 GitHub Code Scanning）
 - 靶场：内置 tiny_app（见 `evals/fixtures/tiny_app/README.md`）、pygoat（GT 7 项）、vulpy（GT 1 项，good/bad 对照）、真实 CVE 修复 commit 回放
-- v2 已落地：SARIF 输出、类别注册表扩展（3→8 类）、vulpy 靶场；v2 候选：MCP 专用工具（调用图查询）、动态 PoC 执行、diff-aware 增量扫描、CVE 回放
+- v2 已落地：SARIF 输出、类别注册表扩展（3→8 类）、vulpy 靶场、diff-aware 增量扫描（`--diff-base`，git diff 变更文件过滤，拿不到 diff 即报错不盲目全仓）；v2 候选：MCP 专用工具（调用图查询）、动态 PoC 执行、CVE 回放
 
 ## 项目结构
 

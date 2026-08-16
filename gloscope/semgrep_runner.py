@@ -31,6 +31,20 @@ def _real_runner(argv: list[str], cwd: Path, timeout: float) -> tuple[int, str, 
     return proc.returncode, proc.stdout, proc.stderr
 
 
+def _git_changed_files(target: Path, base: str) -> list[str]:
+    """diff-aware 增量扫描：base...HEAD 间新增/复制/修改/重命名的文件（相对 target 根）。"""
+    git = shutil.which("git") or "git"
+    proc = subprocess.run(
+        [git, "-C", str(target), "diff", "--name-only", "--diff-filter=ACMR", base],
+        capture_output=True, text=True, timeout=60,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"获取 diff 失败（base={base!r}）: {proc.stderr.strip()[:300]}"
+        )
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
 class SemgrepCandidateGenerator:
     def __init__(
         self,
@@ -38,11 +52,13 @@ class SemgrepCandidateGenerator:
         rules: str = "auto",
         timeout: float = 300.0,
         runner: Runner | None = None,
+        diff_base: str | None = None,
     ) -> None:
         # Windows 下 npm/venv 工具多为 .cmd/.exe shim，subprocess 不解析裸名 → which 预解析
         self._semgrep = shutil.which(semgrep_path) or semgrep_path
         self._rules = rules
         self._timeout = timeout
+        self._diff_base = diff_base
         self._run = runner or _real_runner
 
     @staticmethod
@@ -61,7 +77,17 @@ class SemgrepCandidateGenerator:
     def run(self, target: Path) -> list[Candidate]:
         target = Path(target)
         # --no-git-ignore：审计需要覆盖保证，gitignored 文件同样要扫
-        argv = [self._semgrep, "--json", "--no-git-ignore", "--config", self._rules, "."]
+        argv = [self._semgrep, "--json", "--no-git-ignore", "--config", self._rules]
+        if self._diff_base is not None:
+            try:
+                changed = _git_changed_files(target, self._diff_base)
+            except Exception as e:  # noqa: BLE001 — 增量信息拿不到就不该盲目全仓扫
+                raise SemgrepError(
+                    f"--diff-base 增量扫描失败: {e}（如需全仓扫描请去掉 --diff-base）"
+                ) from e
+            argv += changed
+        else:
+            argv.append(".")
         try:
             returncode, stdout, stderr = self._run(argv, target, self._timeout)
         except FileNotFoundError as e:
