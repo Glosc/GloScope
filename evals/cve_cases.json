@@ -21,6 +21,6 @@
     "fix_commit": "74e55ee4544867e1bd976b7df5a45869ee397b0b",
     "category": "path_traversal",
     "file": "git/refs/symbolic.py",
-    "note": "ref_path 含 .. 读仓库外文件 → 拒绝包含 .. 的 ref"
+    "note": "fix 不干净为正确发现：.. 子串检查可被绝对路径绕过（os.path.join 二参以 / 开头），上游 PR #1644 确认、3.1.37 才补强"
   }
 ]

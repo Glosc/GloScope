@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from gloscope.models import Candidate
-from gloscope.semgrep_runner import SemgrepCandidateGenerator, SemgrepError
+from gloscope.semgrep_runner import BUNDLED_RULES, SemgrepCandidateGenerator, SemgrepError
 
 # 录制的真实 semgrep --json 输出结构（节选自 p/flask 与 p/owasp-top-ten 风格）
 SEMGREP_SAMPLE = {
@@ -108,6 +108,8 @@ def test_argv_contains_json_config_and_target():
     assert "auto" in argv
     assert "." in argv  # 以 target 为 cwd 扫当前目录 → 输出相对路径
     assert "--no-git-ignore" in argv  # 审计要覆盖保证：gitignored 文件也要扫
+    # 盲区补充规则默认与 auto 并联（CVE 回放实测 auto 在两类穿越形态零候选）
+    assert BUNDLED_RULES.name in " ".join(argv)
     assert runner.calls[0][1] == Path("target")
 
 
@@ -287,8 +289,8 @@ def test_diff_base_limits_semgrep_to_changed_files(tmp_path, monkeypatch):
     runner = FakeRunner(stdout=json.dumps({"results": [], "errors": []}))
     SemgrepCandidateGenerator(diff_base="origin/main", runner=runner).run(Path("t"))
     argv = runner.calls[0][0]
-    tail = argv[argv.index("--config") + 2:]  # --config X 之后的路径参数
-    assert tail == changed
+    last_cfg = len(argv) - 1 - argv[::-1].index("--config")
+    assert argv[last_cfg + 2:] == changed  # 最后一个 --config 的值之后即文件参数
 
 
 def test_diff_base_git_failure_is_clear_error(tmp_path, monkeypatch):
@@ -309,7 +311,8 @@ def test_paths_filter_limits_semgrep_to_explicit_files():
         paths=["app.py", "lib/util.py"], runner=runner
     ).run(Path("t"))
     argv = runner.calls[0][0]
-    assert argv[argv.index("--config") + 2:] == ["app.py", "lib/util.py"]
+    last_cfg = len(argv) - 1 - argv[::-1].index("--config")  # 最后一个 --config 之后是路径段
+    assert argv[last_cfg + 2:] == ["app.py", "lib/util.py"]
 
 
 def test_diff_base_and_paths_are_mutually_exclusive():

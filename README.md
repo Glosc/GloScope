@@ -93,15 +93,15 @@ v1 三类范围（6 候选）：full 1.000/0FP，1.52M token / 414s——污点�
 
 ### CVE 回放（真实世界代码，v2 新增）
 
-`evals/cve_replay.py`：浅取 CVE 修复 commit（`--depth 2`）→ 漏洞版/修复版双向验证（案例均经人工审 diff 收录，见 `evals/cve_cases.json`）：
+`evals/cve_replay.py`：浅取 CVE 修复 commit（`--depth 2`）→ 漏洞版/修复版双向验证（案例均经人工审 diff 收录，见 `evals/cve_cases.json`）。**自写盲区规则接入后**（v2 第二轮）：
 
 | CVE | 项目 | 类别 | 漏洞版命中 | 修复版干净 |
 |---|---|---|---|---|
 | CVE-2026-8838 | aws redshift-connector | code_injection | ✅（污点链自服务端网络字节追到 `eval`） | ✅（零候选） |
-| CVE-2026-12243 | nltk | path_traversal | ❌（**规则盲区**：`open(self._path)` 实例属性形态零候选） | ✅ |
-| CVE-2023-41040 | GitPython | path_traversal | ❌（**规则盲区**：间接 ref 路径零候选） | ✅ |
+| CVE-2026-12243 | nltk | path_traversal | ✅（自写规则 `open(self.$ATTR)` 命中） | ✅（零候选） |
+| CVE-2023-41040 | GitPython | path_traversal | ✅（自写规则 join+str 形态命中） | ❌＝**正确发现**：验证层指出 `..` 子串检查可被绝对路径绕过（`os.path.join` 二参以 `/` 开头），与上游 PR #1644 确认、3.1.37 补强的事实吻合 |
 
-1/3 命中、3/3 修复版干净——这组数据比靶场全绿更有信息量：**静态规则在真实世界穿越类漏洞上的召回盲区被精确量化**（miss 全部发生在候选生成层，验证层零失误）。它同时为 tree-sitter 自写规则提供了真实靶场与评测基准（CVE 回放即其回归测试）。
+**自写盲区规则**（`gloscope/rules/blindspots.yml`，默认与 `--config auto` 并联）：semgrep auto 实测在「实例属性路径 `open(self._path)`」与「join+str() 拼接路径」两类真实穿越形态上零候选——两条窄化 YAML 规则补齐，pygoat 全仓 FP 增量为 0。原计划的 tree-sitter 由此**由自写 semgrep 规则替代**（同样达成「自写规则补盲区」，零新依赖）。
 
 ### 验证层 token 去向（v2 实测，分析见 `.scratch/gloscope-v2/token-analysis.md`）
 
@@ -148,7 +148,7 @@ vulpy 的 `bad/`（漏洞版）与 `good/`（安全版）同名对照是天然�
 - 漏洞类型：SQL 注入、SSRF、路径穿越、命令注入、XSS、代码注入（CWE-94）、反序列化（CWE-502）；SSTI 已入注册表待规则补盲区（pygoat 的 SSTI 为文件写入型，静态规则难覆盖，待真实 `render_template_string` 靶场）
 - 报告格式：Markdown / JSON / **SARIF 2.1.0**（v2 新增，confirmed→error / inconclusive→warning，可直接上传 GitHub Code Scanning）
 - 靶场：内置 tiny_app（见 `evals/fixtures/tiny_app/README.md`）、pygoat（GT 7 项）、vulpy（GT 1 项，good/bad 对照）、真实 CVE 修复 commit 回放
-- v2 已落地：SARIF 输出、类别注册表扩展（3→8 类）、vulpy 靶场、diff-aware 增量扫描（`--diff-base`，git diff 变更文件过滤，拿不到 diff 即报错不盲目全仓）；v2 候选：MCP 专用工具（调用图查询）、动态 PoC 执行、CVE 回放
+- v2 已落地：SARIF 输出、类别注册表扩展（3→8 类）、vulpy 靶场、diff-aware 增量扫描（`--diff-base`，git diff 变更文件过滤，拿不到 diff 即报错不盲目全仓）、CVE 回放、自写盲区规则（`gloscope/rules/`）；v2 候选：MCP 专用工具（调用图查询，有条件立项）、动态 PoC 执行
 
 ## 项目结构
 

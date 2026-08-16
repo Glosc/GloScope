@@ -44,6 +44,7 @@ class CveCase:
     fix_commit: str
     category: str  # 八类之一
     file: str      # 修复触碰的关键文件（相对仓库根，正斜杠）
+    note: str = ""
 
 
 @dataclass
@@ -72,7 +73,7 @@ def load_cases(path: Path | str) -> list[CveCase]:
             )
         cases.append(CveCase(
             id=str(raw["id"]), repo=str(raw["repo"]), fix_commit=str(raw["fix_commit"]),
-            category=category, file=str(raw["file"]),
+            category=category, file=str(raw["file"]), note=str(raw.get("note", "")),
         ))
     return cases
 
@@ -184,9 +185,10 @@ def format_summary(results: list[ReplayResult]) -> str:
     for r in results:
         mark_p = "✅" if r.parent_hit else "❌"
         mark_f = "✅" if r.fix_clean else "❌"
+        note = r.error or r.case.note
         lines.append(
             f"| {r.case.id} | {r.case.category} | {mark_p} | {mark_f} "
-            f"| {r.parent_confirmed}→{r.fix_confirmed} | {r.error or ''} |"
+            f"| {r.parent_confirmed}→{r.fix_confirmed} | {note} |"
         )
     return "\n".join(lines)
 

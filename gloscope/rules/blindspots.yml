@@ -1,0 +1,24 @@
+# GloScope 自写盲区补充规则（与 --config auto 并联，默认启用）
+#
+# 起因：CVE 回放实测 semgrep auto 在两类真实穿越形态上零候选——
+#   - nltk CVE-2026-12243: open(self._path, "rb")        （实例属性路径）
+#   - GitPython CVE-2023-41040: open(os.path.join(repodir, str(ref_path)))（参数 str 化拼接）
+# 规则刻意收窄到这两个形态，避免 open() 类 sink 的常见误报爆炸；
+# 误报残余交给分诊/验证漏斗。
+rules:
+  - id: gloscope.path-traversal.self-attr-open
+    languages: [python]
+    severity: WARNING
+    message: open() 的路径直接来自实例属性，若属性可被外部输入影响则存在路径穿越风险
+    metadata:
+      cwe: "CWE-22"
+    patterns:
+      - pattern: open(self.$ATTR, ...)
+
+  - id: gloscope.path-traversal.join-str-open
+    languages: [python]
+    severity: WARNING
+    message: open() 的路径由 os.path.join 拼接 str() 包装的值，str() 包装常意味着外部输入
+    metadata:
+      cwe: "CWE-22"
+    pattern: open(os.path.join(..., str($X)), ...)

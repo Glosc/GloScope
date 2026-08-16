@@ -66,7 +66,10 @@ IDE 等 SARIF 生态消费方；同时类别注册表只覆盖三类漏洞，pyg
 - `challenge/views.py:81` 的 subprocess 候选可控性存疑，未入 GT；验证层实测判
   false_positive（container_id 来自数据库），与人工判断一致。
 - **CVE 回放（2026-08-16）**：harness `evals/cve_replay.py` + 3 案例全部人工审 diff
-  收录。结果 1/3 命中（redshift eval 注入 confirmed 且污点链自网络字节起）、
-  3/3 修复版干净。两个 path_traversal miss 均为**候选生成层规则盲区**
-  （实例属性路径/间接 ref 形态零候选）——tree-sitter 自写规则的启动条件已满足：
-  GitPython/nltk 漏洞版即真实盲区靶场，CVE 回放即其评测基准。
+  收录。首轮 1/3 命中——两个 path_traversal miss 均为候选生成层规则盲区。
+  **自写盲区规则**（`gloscope/rules/blindspots.yml`，两条窄化 YAML，默认与 auto
+  并联，pygoat FP 增量 0）接入后第二轮 **2/3 全通过 + 1 个正确发现**：
+  GitPython 案例的 fix 不干净是验证层指出 `..` 子串检查可被绝对路径绕过
+  （与上游 PR #1644 / 3.1.37 补强吻合）——评测基准把不充分修复记为 ❌ 属基准
+  局限，已在 cases.json note 记录。**tree-sitter 由自写 semgrep 规则替代**
+  （达成同样目标且零新依赖），决策记录于此。

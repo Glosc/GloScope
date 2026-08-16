@@ -16,6 +16,10 @@ from gloscope.models import (
     normalize_cwe,
 )
 
+# 自写盲区补充规则（与 --config auto 并联默认启用）：CVE 回放实测 auto 在
+# 实例属性路径 / str() 拼接路径两类真实穿越形态上零候选
+BUNDLED_RULES = Path(__file__).resolve().parent / "rules" / "blindspots.yml"
+
 # runner: (argv, cwd, timeout) -> (returncode, stdout, stderr)。可注入以便测试。
 Runner: TypeAlias = Callable[[list[str], Path, float], "tuple[int, str, str]"]
 
@@ -81,7 +85,8 @@ class SemgrepCandidateGenerator:
     def run(self, target: Path) -> list[Candidate]:
         target = Path(target)
         # --no-git-ignore：审计需要覆盖保证，gitignored 文件同样要扫
-        argv = [self._semgrep, "--json", "--no-git-ignore", "--config", self._rules]
+        argv = [self._semgrep, "--json", "--no-git-ignore",
+                "--config", self._rules, "--config", str(BUNDLED_RULES)]
         if self._paths is not None:
             argv += self._paths
         elif self._diff_base is not None:
