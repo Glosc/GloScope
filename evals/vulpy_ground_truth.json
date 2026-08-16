@@ -1,0 +1,3 @@
+[
+  {"path": "bad/libuser.py", "category": "sql_injection", "line": 12}
+]

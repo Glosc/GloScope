@@ -93,7 +93,19 @@ v2 六类范围（14 候选）亮点是**逐条鉴别力**而非一刀切：
 
 全量分诊观测（135 候选不过滤）：keep 80 / drop 55（**砍削 40%**，94k token / 439s）。
 
-**第一条里程碑：✅ pygoat 上三类漏洞全部找到（召回 1.000）且误报可控（0）；v2 扩展到六类后保持 1.000/0。**
+### vulpy（第三靶场，Flask/SQLite）
+
+vulpy 的 `bad/`（漏洞版）与 `good/`（安全版）同名对照是天然的误报考验——semgrep 在两边都会报格式相似的 sink：
+
+| 漏斗层 | 召回率 | 误报数 | token 成本 | 耗时(s) |
+|---|---|---|---|---|
+| semgrep | 1.000 | 3 | 0 | 8.1 |
+| +triage | 1.000 | 3 | 2,798 | 20.1 |
+| full | **1.000** | **0** | 932,292 | 294.9 |
+
+验证层的判别力实录：3 个 confirmed（`bad/libuser.py` 登录/创建/改密，`request.form` 用户可控）；3 个 false_positive 各有正确理由——`bad/db*.py` 的拼接输入是**硬编码初始化数据**（非用户输入），`good/libuser.py:61` 是安全对照版（追调用链后发现无可达污点链）。**good/ 上的候选被正确清除，对照考验通过。**
+
+**第一条里程碑：✅ pygoat 上三类漏洞全部找到（召回 1.000）且误报可控（0）；v2 扩展到六类后 pygoat/vulpy 均保持 1.000/0。**
 
 ## 设计决策
 
@@ -115,7 +127,7 @@ v2 六类范围（14 候选）亮点是**逐条鉴别力**而非一刀切：
 - 目标代码：Python Web（Flask / FastAPI / Django）
 - 漏洞类型：SQL 注入、SSRF、路径穿越、命令注入、XSS（v2 扩展；SSTI 已入注册表待规则补盲区）
 - 报告格式：Markdown / JSON / **SARIF 2.1.0**（v2 新增，confirmed→error / inconclusive→warning，可直接上传 GitHub Code Scanning）
-- 靶场：内置 tiny_app（见 `evals/fixtures/tiny_app/README.md`）、pygoat（GT 7 项）、vulpy、真实 CVE 修复 commit 回放
+- 靶场：内置 tiny_app（见 `evals/fixtures/tiny_app/README.md`）、pygoat（GT 7 项）、vulpy（GT 1 项，good/bad 对照）、真实 CVE 修复 commit 回放
 - v2 已落地：SARIF 输出、类别注册表扩展；v2 候选：tree-sitter 自写规则补盲区（SSTI 实测零候选）、MCP 专用工具（调用图查询）、动态 PoC 执行、diff-aware 增量扫描、code_injection（CWE-94）/deserialization（CWE-502）类别
 
 ## 项目结构
