@@ -63,6 +63,7 @@ Status: ready-for-agent
   - `cli`：argparse 子命令 `scan` / `eval`。
   - `evals/`：固定靶场 fixture + ground truth 标注 + 评测脚本（四指标输出、分层对比）。
 - **候选去重与覆盖**（真实冒烟后新增的决策）：semgrep 以 `--no-git-ignore` 扫描（审计要覆盖保证）；同文件同类别 3 行内的多规则命中（p/flask 与 p/django 规则族重叠）合并为一个候选；registry metadata CWE 错挂时（如 tainted-sql-string → CWE-704）以规则族推断为准。
+- **类别白名单**（pygoat 实测后新增）：pygoat 135 个候选中 unknown 类（模板/Dockerfile/其他漏洞）占 129 个，全量验证成本不可接受；`--categories` 旋钮把 v1 目标三类落实为可配置过滤，类别外候选计入截断口径。评测路径匹配需归一化分隔符（Windows semgrep 输出反斜杠，GT 用正斜杠）。
 - **验证输出契约**（JSON schema 核心字段）：`verdict` ∈ {confirmed, false_positive, inconclusive}；`cwe`（如 CWE-89）；`taint_path` 为 file:line 步骤数组；`confidence` ∈ {high, medium, low}；`poc_idea`；`explanation`。
 - **分诊输出契约**：薄输出——`keep`（bool）+ `reason`（一行）。
 - **codex 集成方式**：不 fork 源码、不引 SDK，`codex exec` 子进程 + 临时配置注入；具体 flag 组合以本机 `codex exec --help` 实测为准，spec 只锁定「自包含 prompt + 结构化输出 + 只读沙箱」三个不变量。真实运行补充的约束（2026-08 实测，codex-cli 0.147）：`model_providers.wire_api` 仅支持 `"responses"`（chat 已移除），网关需支持 `/v1/responses`；`CODEX_HOME` 不能位于系统临时目录（codex 拒绝创建 helper binaries），固定用 `~/.gloscope/codex-home`；工具可执行文件需 `shutil.which` 预解析（Windows 下 npm/venv 均为 .cmd/.exe shim）；cwd/`-C` 必须传绝对路径（相对路径触发 .cmd shim 的 os error 3）；prompt 经 stdin 传递（`-` 模式，长 prompt 含引号/中文会破坏 .cmd 参数边界，亦消除注入面）；token 用量从顶层 `turn.completed` 事件的 `usage` 累计（codex 0.147 --json 真实形状）。

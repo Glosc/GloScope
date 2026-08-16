@@ -61,9 +61,14 @@ def _finding_category(f: Finding) -> str:
     return f.candidate.category
 
 
+def _norm(path: str) -> str:
+    """Windows 上 semgrep 输出反斜杠路径，GT 统一正斜杠。"""
+    return path.replace("\\", "/")
+
+
 def _match(findings: list[Finding], gt: GroundTruthItem) -> bool:
     return any(
-        f.candidate.path == gt.path and _finding_category(f) == gt.category
+        _norm(f.candidate.path) == gt.path and _finding_category(f) == gt.category
         for f in findings
     )
 
@@ -83,7 +88,7 @@ def evaluate(report: ScanReport, ground_truth: list[GroundTruthItem]) -> EvalRes
     for name, hits, tokens, seconds in stages:
         tp = sum(1 for g in ground_truth if _match(hits, g))
         fp = sum(
-            1 for f in hits if (f.candidate.path, _finding_category(f)) not in gt_set
+            1 for f in hits if (_norm(f.candidate.path), _finding_category(f)) not in gt_set
         )
         recall = tp / len(ground_truth) if ground_truth else 0.0
         rows.append(

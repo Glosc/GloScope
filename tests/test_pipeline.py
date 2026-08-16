@@ -128,6 +128,16 @@ def test_max_candidates_truncates_and_records():
     assert report.truncated == 1
 
 
+def test_categories_filter_keeps_only_known_classes():
+    """pygoat 实测：unknown 类候选（模板/Dockerfile/其他漏洞）占 95%+，
+    v1 目标就是三类，提供范围过滤控制验证成本。"""
+    report = build(tri=None, ver=None, skip_triage=True, skip_verify=True,
+                   categories={"sql_injection", "ssrf"}).run(Path("t"))
+    cats = {f.candidate.category for f in report.findings}
+    assert cats == {"sql_injection", "ssrf"}
+    assert report.truncated == 1  # path_traversal 被过滤也计入截断（漏斗口径一致）
+
+
 def test_triage_exception_fails_open_per_candidate():
     tri = FakeTriager(raise_on="rule.ssrf")
     ver = FakeVerifier()

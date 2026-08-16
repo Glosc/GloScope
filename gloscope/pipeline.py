@@ -19,6 +19,8 @@ class PipelineOptions:
     skip_triage: bool = False
     skip_verify: bool = False
     max_candidates: int | None = None
+    # 只让指定类别的候选进漏斗（如 v1 的三类目标）；None 表示不过滤
+    categories: set[str] | None = None
 
 
 class Pipeline:
@@ -55,8 +57,12 @@ class Pipeline:
         semgrep_seconds = time.perf_counter() - t0
 
         truncated = 0
+        if self._opts.categories is not None:
+            before = len(candidates)
+            candidates = [c for c in candidates if c.category in self._opts.categories]
+            truncated += before - len(candidates)
         if self._opts.max_candidates is not None and len(candidates) > self._opts.max_candidates:
-            truncated = len(candidates) - self._opts.max_candidates
+            truncated += len(candidates) - self._opts.max_candidates
             candidates = candidates[: self._opts.max_candidates]
 
         triage_seconds = 0.0

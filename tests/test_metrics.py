@@ -101,6 +101,16 @@ def test_unknown_category_never_matches():
     assert r.rows[0].tp == 0
 
 
+def test_path_matching_normalizes_separators():
+    """pygoat 实测：Windows 上 semgrep 输出反斜杠路径，GT 用正斜杠 → 必须归一化。"""
+    rep = ScanReport(target="t", findings=[Finding(
+        candidate=Candidate("r.ssrf", r"introduction\views.py", 963, 963,
+                            "s", "m", "CWE-918", "ssrf"),
+    )])
+    gt = [GroundTruthItem("introduction/views.py", "ssrf", 963)]
+    assert evaluate(rep, gt).rows[0].tp == 1
+
+
 def test_category_match_prefers_verification_cwe():
     # semgrep 报 sqli，验证层纠正为 CWE-918(ssrf)：full 层按 ssrf 匹配
     rep = ScanReport(target="t", findings=[Finding(

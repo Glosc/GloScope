@@ -48,6 +48,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--skip-triage", action="store_true", help="跳过 LLM 分诊层")
     p_scan.add_argument("--skip-verify", action="store_true", help="跳过 codex 深度验证层")
     p_scan.add_argument("--max-candidates", type=int, metavar="N", help="限制进入漏斗的候选数（控制成本）")
+    p_scan.add_argument("--categories", metavar="CATS",
+                        help="逗号分隔的类别白名单（如 sql_injection,ssrf,path_traversal），"
+                             "只让这些类别的候选进漏斗")
     p_scan.add_argument("--output-dir", default="reports", help="报告输出目录（默认 reports/）")
     p_scan.add_argument("--semgrep-rules", default="auto", help="semgrep 规则集（默认 auto）")
     p_scan.add_argument("--semgrep-path", default="semgrep", help="semgrep 可执行文件路径")
@@ -65,6 +68,10 @@ def _cmd_scan(args: argparse.Namespace, factory: PipelineFactory) -> int:
         skip_triage=args.skip_triage,
         skip_verify=args.skip_verify,
         max_candidates=args.max_candidates,
+        categories=(
+            {c.strip() for c in args.categories.split(",") if c.strip()}
+            if args.categories else None
+        ),
     )
     cfg: Config | None = None
     needs_llm = not (options.skip_triage and options.skip_verify)
