@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
+from gloscope import __version__
 from gloscope.models import (
     Candidate,
     Finding,
@@ -136,6 +137,57 @@ def render_json(report: ScanReport) -> str:
             "verify_seconds": s.verify_seconds,
         },
         "findings": [asdict_jsonable(f) for f in report.findings],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def render_sarif(report: ScanReport) -> str:
+    """SARIF 2.1.0 最小可用子集：confirmed→error、inconclusive→warning；
+    false_positive/dropped 非 actionable 不入；验证依据进 result.properties。
+    """
+    results = []
+    for f in report.findings:
+        if not (f.is_confirmed or f.is_inconclusive):
+            continue
+        v = f.verification
+        assert v is not None
+        results.append(
+            {
+                "ruleId": f.candidate.check_id,
+                "level": "error" if f.is_confirmed else "warning",
+                "message": {"text": v.explanation or f.candidate.message},
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {
+                                "uri": f.candidate.path.replace("\\", "/")
+                            },
+                            "region": {
+                                "startLine": f.candidate.start_line,
+                                "endLine": f.candidate.end_line,
+                            },
+                        }
+                    }
+                ],
+                "properties": {
+                    "verdict": v.verdict,
+                    "cwe": v.cwe or f.candidate.cwe or "",
+                    "confidence": v.confidence,
+                    "taintPath": v.taint_path,
+                    "pocIdea": v.poc_idea,
+                    **({"error": v.error} if v.error else {}),
+                },
+            }
+        )
+    payload = {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {"driver": {"name": "GloScope", "version": __version__}},
+                "results": results,
+            }
+        ],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 

@@ -12,7 +12,7 @@ from gloscope.config import Config, ConfigError, load_config
 from gloscope.metrics import evaluate, format_table, load_ground_truth
 from gloscope.models import ScanReport
 from gloscope.pipeline import Pipeline, PipelineOptions
-from gloscope.report import render_json, render_markdown, report_from_json
+from gloscope.report import render_json, render_markdown, render_sarif, report_from_json
 from gloscope.semgrep_runner import SemgrepCandidateGenerator, SemgrepError
 from gloscope.triage import OpenAITriageClient
 from gloscope.verify import CodexVerifier
@@ -98,13 +98,14 @@ def _cmd_scan(args: argparse.Namespace, factory: PipelineFactory) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "report.md").write_text(render_markdown(report), encoding="utf-8")
     (out_dir / "report.json").write_text(render_json(report), encoding="utf-8")
+    (out_dir / "report.sarif").write_text(render_sarif(report), encoding="utf-8")
 
     s = report.stats()
     print(
         f"扫描完成：候选 {s.candidates} · 确认 (confirmed) {s.confirmed} · "
         f"误报 {s.false_positives} · 存疑 {s.inconclusive} · token 合计 {s.tokens_total}"
     )
-    print(f"报告已写入: {out_dir / 'report.md'} 与 {out_dir / 'report.json'}")
+    print(f"报告已写入: {out_dir / 'report.md'} / report.json / report.sarif")
     return 0
 
 

@@ -57,8 +57,11 @@ def test_scan_writes_reports_and_prints_summary(tmp_path, capsys):
     assert rc == 0
     md = (out_dir / "report.md").read_text(encoding="utf-8")
     js = json.loads((out_dir / "report.json").read_text(encoding="utf-8"))
+    sarif = json.loads((out_dir / "report.sarif").read_text(encoding="utf-8"))
     assert "确认" in md
     assert js["stats"]["confirmed"] == 1
+    assert sarif["version"] == "2.1.0"  # SARIF 一并落盘
+    assert len(sarif["runs"][0]["results"]) == 1  # 仅 confirmed 入
     out = capsys.readouterr().out
     assert "confirmed" in out and "report.md" in out
 
