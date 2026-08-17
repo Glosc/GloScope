@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "GloScope",
+          "version": "0.1.0"
+        }
+      },
+      "results": [
+        {
+          "ruleId": "python.flask.security.xss.audit.explicit-unescape-with-markup.explicit-unescape-with-markup",
+          "level": "warning",
+          "message": {
+            "text": "Detected explicitly unescaped content using 'Markup()'. This permits the unescaped data to include unescaped HTML which could result in cross-site scripting. Ensure this data is not externally controlled, or consider rewriting to not use 'Markup()'."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "quokka/admin/actions.py"
+                },
+                "region": {
+                  "startLine": 151,
+                  "endLine": 155
+                }
+              }
+            }
+          ],
+          "properties": {
+            "verdict": "inconclusive",
+            "cwe": "CWE-79",
+            "confidence": "low",
+            "taintPath": [],
+            "pocIdea": "",
+            "error": "验证输出不可解析: Expecting value: line 1 column 1 (char 0)"
+          }
+        },
+        {
+          "ruleId": "python.flask.security.xss.audit.explicit-unescape-with-markup.explicit-unescape-with-markup",
+          "level": "warning",
+          "message": {
+            "text": "Detected explicitly unescaped content using 'Markup()'. This permits the unescaped data to include unescaped HTML which could result in cross-site scripting. Ensure this data is not externally controlled, or consider rewriting to not use 'Markup()'."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "quokka/core/content/formats.py"
+                },
+                "region": {
+                  "startLine": 407,
+                  "endLine": 407
+                }
+              }
+            }
+          ],
+          "properties": {
+            "verdict": "inconclusive",
+            "cwe": "CWE-79",
+            "confidence": "low",
+            "taintPath": [],
+            "pocIdea": "",
+            "error": "验证输出不可解析: Expecting value: line 1 column 1 (char 0)"
+          }
+        },
+        {
+          "ruleId": "python.django.security.audit.xss.html-magic-method.html-magic-method",
+          "level": "error",
+          "message": {
+            "text": "source 是公开路由的 URL path，完全用户可控且无净化；sink 是 Orderable.__html__ 直接返回 str(self)，其中 Category.__str__ 返回原始 category。Flask/Jinja 对 .html 模板默认 autoescape，但 MarkupSafe 对带 __html__ 的对象会直接采用返回值而不转义，因此 category.html 中 {{ category }} 形成反射型 XSS。空分类 404 可通过正则注入（可选分组）绕过，只要存在 category_slug 前缀为 blog 的已发布文章。"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "quokka/core/content/models.py"
+                },
+                "region": {
+                  "startLine": 50,
+                  "endLine": 51
+                }
+              }
+            }
+          ],
+          "properties": {
+            "verdict": "confirmed",
+            "cwe": "CWE-79",
+            "confidence": "high",
+            "taintPath": [
+              "quokka/core/content/__init__.py:174 - 公开路由 /<path:category>/ 将 URL 路径原样绑定到 ArticleListView.get(category)",
+              "quokka/core/content/views.py:94 - get() 接收 category 参数，未做任何白名单、HTML 转义或正则转义",
+              "quokka/core/content/views.py:113 - category 被直接拼入 $regex 查询；可构造正则匹配已有 published 文章以绕过空结果 404",
+              "quokka/core/content/views.py:176 - 同一 category 被包装为 Category(category) 并放入模板上下文",
+              "quokka/core/content/models.py:101 - Category.__str__ 返回未经净化的原始 self.category",
+              "quokka/core/content/models.py:50 - Orderable.__html__ 返回 str(self)，使 Jinja/MarkupSafe 将其视为安全 Markup",
+              "quokka/core/content/views.py:200 - render_template 渲染 category.html，无显式 escape 过滤",
+              "quokka/templates/category.html:3 - {{ category }} 直接输出 Orderable 对象"
+            ],
+            "pocIdea": "前提是数据库中存在至少一篇已发布文章且其 category_slug 以 blog 开头。请求 /blog(?:%3Cscript%3Ealert(1)%3C/script%3E)*/，category 解码后为 blog(?:<script>alert(1)</script>)*；$regex 因可选分组可匹配 blog，绕过空分类 404，随后 __html__ 导致 <script>alert(1)</script> 原样输出。"
+          }
+        },
+        {
+          "ruleId": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+          "level": "error",
+          "message": {
+            "text": "q 参数经 getURLP 解码后进入输入框并自动触发搜索；d_w 仅经过 toLowerCase/trim、按空格分词、停用词过滤和词干替换，均未对正则元字符进行转义或白名单校验。第 254 行在 token 以 '-' 开头时去除 '-' 后直接把剩余字符串传入 new RegExp，并在第 255 行对页面 title/text/tags 执行 search，构成可被恶意链接触发的客户端 ReDoS。可达性依赖 bootstrap3 主题及 Tipue Search 页面被启用，但该主题模板和搜索表单均已提供加载/触发路径。"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "quokka/project_template/themes/bootstrap3/static/tipuesearch/tipuesearch.js"
+                },
+                "region": {
+                  "startLine": 254,
+                  "endLine": 254
+                }
+              }
+            }
+          ],
+          "properties": {
+            "verdict": "confirmed",
+            "cwe": "CWE-1333",
+            "confidence": "medium",
+            "taintPath": [
+              "quokka/project_template/themes/bootstrap3/templates/base.html:154 - 搜索表单以 GET 将 name=q 提交到 /search.html，q 由外部用户控制",
+              "quokka/project_template/themes/bootstrap3/templates/search.html:16 - 搜索页初始化 #tipue_search_input 的 tipuesearch 插件，加载 tipuesearch.min.js/packed 代码",
+              "quokka/project_template/themes/bootstrap3/static/tipuesearch/tipuesearch.js:100 - getURLP('q') 从 location.search 提取 q，写入输入框并调用 getTipueSearch(0,true)",
+              "quokka/project_template/themes/bootstrap3/static/tipuesearch/tipuesearch.js:129 - d = $('#tipue_search_input').val().toLowerCase()，污点进入搜索词",
+              "quokka/project_template/themes/bootstrap3/static/tipuesearch/tipuesearch.js:139 - d_w = d.split(' ')，仅按空格分词，后续 stop-word/stem 替换未做正则转义或白名单",
+              "quokka/project_template/themes/bootstrap3/static/tipuesearch/tipuesearch.js:254 - pat = new RegExp(d_w[f].substring(1), 'i')，把用户可控词去掉前缀 '-' 后直接作为正则",
+              "quokka/project_template/themes/bootstrap3/static/tipuesearch/tipuesearch.js:255 - 对每个页面的 title/text/tags 执行 pat.search()，恶意嵌套量词可导致指数级回溯/ReDoS"
+            ],
+            "pocIdea": "在启用 bootstrap3 主题及 Tipue Search 的站点访问 /search.html?q=-%28%5B%5Cw%5Cs%5D%2B%29%2B%23。脚本加载后自动把 q 写入输入框并搜索；排除词分支中 substring(1) 得到 ([\\w\\s]+)+#，对页面正文调用 String.search 时因贪婪嵌套量词且末尾字符不匹配产生指数级回溯，页面长时间无响应、CPU 占用。"
+          }
+        }
+      ]
+    }
+  ]
+}
