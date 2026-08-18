@@ -3256,12 +3256,14 @@ dependencies = [
  "codex-extension-api",
  "codex-protocol",
  "codex-tools",
+ "dirs",
  "pretty_assertions",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "toml 0.9.11+spec-1.1.0",
  "which 8.0.0",
 ]
 
