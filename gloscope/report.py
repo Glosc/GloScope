@@ -34,6 +34,8 @@ def _section_confirmed(f: Finding, idx: int) -> list[str]:
         lines.append(f"- PoC 思路：{v.poc_idea}")
     if v.explanation:
         lines.append(f"- 依据：{v.explanation}")
+    if v.execution_context != "unknown":
+        lines.append(f"- 执行位置：{v.execution_context}")
     if f.triage and f.triage.reason:
         lines.append(f"- 分诊理由：{f.triage.reason}")
     if v.error:
@@ -223,6 +225,7 @@ def report_from_json(text: str) -> ScanReport:
                 poc_method=v.get("poc_method", ""), poc_path=v.get("poc_path", ""),
                 poc_query=v.get("poc_query", ""), poc_body=v.get("poc_body", ""),
                 poc_signal=v.get("poc_signal", ""),
+                execution_context=v.get("execution_context", "unknown"),
                 error=v.get("error"), model=v.get("model", ""),
                 tokens_in=v.get("tokens_in", 0), tokens_out=v.get("tokens_out", 0),
             )

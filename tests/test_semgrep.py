@@ -177,6 +177,26 @@ def test_v2_rule_families_map_to_new_categories():
     assert by_line[1200].category == "deserialization"
 
 
+def test_v2_categories_include_regex_dos_and_improper_check():
+    """dogfood（Quokka CMS）实测新增类别：regex_dos（CWE-1333）与 improper_check（CWE-706）。"""
+    sample = {
+        "results": [
+            {"check_id": "javascript.lang.security.audit.regex-dos.regex-dos",
+             "path": "static/lib.js", "start": {"line": 10}, "end": {"line": 10},
+             "extra": {"message": "m", "lines": "s", "metadata": {}}},
+            {"check_id": "python.lang.security.audit.non-literal-import.non-literal-import",
+             "path": "app.py", "start": {"line": 50}, "end": {"line": 50},
+             "extra": {"message": "m", "lines": "s", "metadata": {}}},
+        ]
+    }
+    cands = make_gen(FakeRunner(stdout=json.dumps(sample))).run(Path("t"))
+    by_line = {c.start_line: c for c in cands}
+    assert by_line[10].category == "regex_dos"
+    assert by_line[10].cwe == "CWE-1333"
+    assert by_line[50].category == "improper_check"
+    assert by_line[50].cwe == "CWE-706"
+
+
 def test_duplicate_rules_on_same_sink_are_deduped():
     """django/flask 两套 registry 规则常同时命中同一 sink（同行或相邻行）→ 合并为一个候选。"""
     sample = {
@@ -282,7 +302,7 @@ def test_snippet_falls_back_to_extra_lines_when_file_missing(tmp_path):
 
 def test_diff_base_limits_semgrep_to_changed_files(tmp_path, monkeypatch):
     """diff-aware 增量扫描：--diff-base 时只把 git 变更文件交给 semgrep。"""
-    changed = ["app.py", "lib/util.py"]
+    changed = ["app.py", "lib/util.py", "static/app.js"]
     monkeypatch.setattr(
         "gloscope.semgrep_runner._git_changed_files", lambda target, base: changed
     )
@@ -290,7 +310,8 @@ def test_diff_base_limits_semgrep_to_changed_files(tmp_path, monkeypatch):
     SemgrepCandidateGenerator(diff_base="origin/main", runner=runner).run(Path("t"))
     argv = runner.calls[0][0]
     last_cfg = len(argv) - 1 - argv[::-1].index("--config")
-    assert argv[last_cfg + 2:] == changed  # 最后一个 --config 的值之后即文件参数
+    # 最后一个 --config 的值之后：--include *.py + 过滤后的 .py 变更文件
+    assert argv[last_cfg + 2:] == ["--include", "*.py", "app.py", "lib/util.py"]
 
 
 def test_diff_base_git_failure_is_clear_error(tmp_path, monkeypatch):
@@ -321,3 +342,22 @@ def test_diff_base_and_paths_are_mutually_exclusive():
         SemgrepCandidateGenerator(
             paths=["a.py"], diff_base="main", runner=runner
         )
+
+
+def test_argv_includes_python_only_by_default():
+    """dogfood 实测：semgrep 规则族对 vendored JS 误报极高（108 候选 ~70 来自前端库）。
+    默认（含 diff-base）模式加 --include "*.py"；paths 模式不覆盖用户显式清单。"""
+    runner = FakeRunner(stdout=json.dumps({"results": [], "errors": []}))
+    make_gen(runner).run(Path("t"))
+    argv = runner.calls[0][0]
+    i = argv.index("--include")
+    assert argv[i + 1] == "*.py"
+
+
+def test_paths_mode_skips_include_filter():
+    runner = FakeRunner(stdout=json.dumps({"results": [], "errors": []}))
+    SemgrepCandidateGenerator(
+        paths=["app.py", "notes.txt"], runner=runner
+    ).run(Path("t"))
+    argv = runner.calls[0][0]
+    assert "--include" not in argv  # 显式清单即用户意图，不替用户过滤

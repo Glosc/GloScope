@@ -135,6 +135,24 @@ vulpy 的 `bad/`（漏洞版）与 `good/`（安全版）同名对照是天然�
 
 **第一条里程碑：✅ pygoat 上三类漏洞全部找到（召回 1.000）且误报可控（0）；v2 扩展到六类后 pygoat/vulpy 均保持 1.000/0。**
 
+### Dogfood：真实 CMS 项目（Quokka，2026-08-18）
+
+第一次在无 ground truth 的真实项目上全流程运行（`evals/dogfood/quokka.md`），暴露出上述受控靶场未覆盖的问题：
+
+| 层 | 候选数 | keep/drop | 确认 | 误报 | 存疑 | token 成本 | 耗时(s) |
+|---|---|---|---|---|---|---|---|
+| semgrep | 108 | — | — | — | — | 0 | 30.7 |
+| +triage | 108 | 27 kept / 81 dropped | — | — | — | 166k | 388.7 |
+| full | 108 | — | 2 | 23 | 2 | 21.35M | 4879.2 |
+
+发现 1 个真实 Stored XSS（CWE-79，`Orderable.__html__` 绕过 Jinja 自动转义，PoC 可直接构造）与 1 个客户端 ReDoS 边界案例。验证层对 27 个 kept 候选的判别力人工复核全部正确。
+
+**暴露的四个问题已修复**：
+1. semgrep 误匹配 vendored JS（108 候选中 ~70 来自前端静态库）→ 默认模式加 `--include "*.py"`（`paths` 模式不受影响，尊重用户显式清单）
+2. codex 偶发空输出（`Expecting value: line 1 column 1`）→ 自动重试一次
+3. 类别注册表覆盖不足（`unknown` 候选里验证层推断出 CWE-1333/CWE-706 但注册表没有对应类别）→ 新增 `regex_dos`（CWE-1333）、`improper_check`（CWE-706）
+4. 服务端/客户端边界不明确（tipuesearch.js 的 ReDoS 是客户端代码，风险等级与服务端漏洞不同）→ 验证层输出新增 `execution_context: server | client | unknown` 字段
+
 ## 设计决策
 
 | 决策点 | 定案 |
@@ -146,17 +164,17 @@ vulpy 的 `bad/`（漏洞版）与 `good/`（安全版）同名对照是天然�
 | 编排层语言 | Python（编排、分诊、评测一体，零第三方运行时依赖） |
 | 知识注入 | 每候选自包含 exec prompt，不碰目标仓库 |
 | 沙箱 | v1 只读（`codex exec -s read-only`）；动态 PoC 验证是 v2 里程碑 |
-| 扫描范围 | v1 全仓（`--no-git-ignore`），目标是小靶场 |
+| 扫描范围 | v1 全仓（`--no-git-ignore`），目标是小靶场；dogfood 后默认加 `--include "*.py"`（`paths` 模式不受影响） |
 | 失败策略 | fail-open：分诊失败保守保留、验证失败置 inconclusive，不吞候选 |
 | 候选去重 | 同文件同类别 3 行内的多规则命中（django/flask 规则族重叠）合并 |
 
 ## 目标与范围
 
 - 目标代码：Python Web（Flask / FastAPI / Django）
-- 漏洞类型：SQL 注入、SSRF、路径穿越、命令注入、XSS、代码注入（CWE-94）、反序列化（CWE-502）；SSTI 已入注册表待规则补盲区（pygoat 的 SSTI 为文件写入型，静态规则难覆盖，待真实 `render_template_string` 靶场）
+- 漏洞类型：SQL 注入、SSRF、路径穿越、命令注入、XSS、代码注入（CWE-94）、反序列化（CWE-502）、ReDoS（CWE-1333）、不恰当校验（CWE-706，dogfood 新增两类）；SSTI 已入注册表待规则补盲区（pygoat 的 SSTI 为文件写入型，静态规则难覆盖，待真实 `render_template_string` 靶场）
 - 报告格式：Markdown / JSON / **SARIF 2.1.0**（v2 新增，confirmed→error / inconclusive→warning，可直接上传 GitHub Code Scanning）
-- 靶场：内置 tiny_app（见 `evals/fixtures/tiny_app/README.md`）、pygoat（GT 7 项）、vulpy（GT 1 项，good/bad 对照）、真实 CVE 修复 commit 回放
-- v2 已落地：SARIF 输出、类别注册表扩展（3→8 类）、vulpy 靶场、diff-aware 增量扫描（`--diff-base`，git diff 变更文件过滤，拿不到 diff 即报错不盲目全仓）、CVE 回放、自写盲区规则（`gloscope/rules/`）、调用图入口索引注入（`--no-callgraph` 可关）、动态 PoC 复现（`check-dynamic`，环回白名单）
+- 靶场：内置 tiny_app（见 `evals/fixtures/tiny_app/README.md`）、pygoat（GT 7 项）、vulpy（GT 1 项，good/bad 对照）、真实 CVE 修复 commit 回放、真实 CMS 项目 dogfood（Quokka，无 ground truth）
+- v2 已落地：SARIF 输出、类别注册表扩展（3→8 类，dogfood 后再扩至 10 类）、vulpy 靶场、diff-aware 增量扫描（`--diff-base`，git diff 变更文件过滤，拿不到 diff 即报错不盲目全仓）、CVE 回放、自写盲区规则（`gloscope/rules/`）、调用图入口索引注入（`--no-callgraph` 可关）、动态 PoC 复现（`check-dynamic`，环回白名单）、验证层执行上下文标注（`execution_context: server | client | unknown`）、semgrep 默认限定 `--include "*.py"`（dogfood 实测 vendored JS 误匹配占比过高）
 
 ## 项目结构
 
@@ -200,7 +218,7 @@ verify_timeout = 600.0                  # codex exec 单候选超时（秒）
 
 ```bash
 uv pip install -e ".[dev]"
-pytest                  # 64 项测试，全部离线（假 semgrep/LLM/codex）
+pytest                  # 118 项测试，全部离线（假 semgrep/LLM/codex）
 mypy gloscope
 ```
 

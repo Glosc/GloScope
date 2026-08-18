@@ -48,6 +48,7 @@ GOOD_OUTPUT = {
     "poc_query": "id=' OR '1'='1",
     "poc_body": "",
     "poc_signal": "admin",
+    "execution_context": "server",
 }
 
 
@@ -55,12 +56,15 @@ class FakeCodexRunner:
     """模拟 codex：--version 调用返回版本串；exec 调用把 result_json 写到 -o 文件。"""
 
     def __init__(self, result=GOOD_OUTPUT, returncode=0, stdout="", stderr="",
-                 raise_exc=None, dont_write=False, version_returncode=0):
+                 raise_exc=None, dont_write=False, version_returncode=0,
+                 empty_writes=0):
         self.result, self.returncode = result, returncode
         self.stdout, self.stderr = stdout, stderr
         self.raise_exc = raise_exc
         self.dont_write = dont_write
         self.version_returncode = version_returncode
+        # 前 N 次 exec 调用写空字符串到 -o 文件，模拟 codex 偶发空输出；之后正常写结果
+        self.empty_writes = empty_writes
         self.calls: list[dict] = []
 
     @property
@@ -80,7 +84,11 @@ class FakeCodexRunner:
         self.calls[-1]["codex_config"] = (home / "config.toml").read_text(encoding="utf-8")
         if not self.dont_write:
             out_path = Path(argv[argv.index("-o") + 1])
-            out_path.write_text(json.dumps(self.result), encoding="utf-8")
+            if self.empty_writes > 0:
+                self.empty_writes -= 1
+                out_path.write_text("", encoding="utf-8")
+            else:
+                out_path.write_text(json.dumps(self.result), encoding="utf-8")
         return self.returncode, self.stdout, self.stderr
 
 
@@ -180,12 +188,16 @@ def test_output_schema_file_strict(tmp_path):
         "verdict", "cwe", "taint_path", "confidence", "poc_idea", "explanation",
         # 动态 PoC（B1）：扁平字段，空串=不适用（codex 严格模式不友好于嵌套 nullable）
         "poc_method", "poc_path", "poc_query", "poc_body", "poc_signal",
+        "execution_context",
     }
     assert schema["additionalProperties"] is False
     assert set(schema["properties"]["verdict"]["enum"]) == {
         "confirmed", "false_positive", "inconclusive"
     }
     assert set(schema["properties"]["confidence"]["enum"]) == {"high", "medium", "low"}
+    assert set(schema["properties"]["execution_context"]["enum"]) == {
+        "server", "client", "unknown"
+    }
     for f in ("poc_method", "poc_path", "poc_query", "poc_body", "poc_signal"):
         assert schema["properties"][f]["type"] == "string"
 
@@ -210,6 +222,16 @@ def test_parses_confirmed_verification_with_tokens(tmp_path):
     assert v.poc_method == "GET" and v.poc_path == "/user"
     assert v.poc_query == "id=' OR '1'='1"
     assert v.poc_signal == "admin"
+    assert v.execution_context == "server"
+
+
+def test_execution_context_defaults_to_unknown_when_missing(tmp_path):
+    """旧输出/schema 未强制字段时的兼容：缺失 execution_context 默认 unknown。"""
+    output = {**GOOD_OUTPUT}
+    del output["execution_context"]
+    runner = FakeCodexRunner(result=output)
+    v = make_verifier(runner).verify(CAND, tmp_path)
+    assert v.execution_context == "unknown"
 
 
 def test_nonzero_exit_is_inconclusive_with_error(tmp_path):
@@ -231,6 +253,36 @@ def test_missing_output_file_is_inconclusive(tmp_path):
     v = make_verifier(runner).verify(CAND, tmp_path)
     assert v.verdict == "inconclusive"
     assert v.error
+
+
+def test_empty_output_auto_retries_once(tmp_path, monkeypatch):
+    """dogfood 实测：codex 偶发写出空文件（JSON 解析报 line 1 column 1）——
+    这是瞬时性问题，重试一次拿到正常输出即成功解析。"""
+    monkeypatch.setattr("gloscope.verify.shutil.which", lambda n: None)
+    runner = FakeCodexRunner(empty_writes=1)  # 第一次空输出，第二次正常
+    v = make_verifier(runner).verify(CAND, tmp_path)
+    assert v.verdict == "confirmed"
+    assert v.error is None
+    assert len(runner.exec_calls) == 2  # 原始调用 + 1 次重试
+
+
+def test_empty_output_still_fails_after_retry(tmp_path, monkeypatch):
+    """重试后仍空输出（非瞬时性问题）→ inconclusive，错误信息标注已重试。"""
+    monkeypatch.setattr("gloscope.verify.shutil.which", lambda n: None)
+    runner = FakeCodexRunner(empty_writes=99)  # 一直空输出
+    v = make_verifier(runner).verify(CAND, tmp_path)
+    assert v.verdict == "inconclusive"
+    assert "retry" in (v.error or "").lower() or "重试" in (v.error or "")
+    assert len(runner.exec_calls) == 2  # 最多重试 1 次，不无限重试
+
+
+def test_non_empty_parse_error_does_not_retry(tmp_path, monkeypatch):
+    """verdict 缺失/非法这类非幂等错误不应重试（重试解决不了内容问题）。"""
+    monkeypatch.setattr("gloscope.verify.shutil.which", lambda n: None)
+    runner = FakeCodexRunner(result={"unexpected": "shape"})
+    v = make_verifier(runner).verify(CAND, tmp_path)
+    assert v.verdict == "inconclusive"
+    assert len(runner.exec_calls) == 1  # 未重试
 
 
 def test_bad_output_json_is_inconclusive(tmp_path):

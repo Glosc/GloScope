@@ -89,16 +89,22 @@ class SemgrepCandidateGenerator:
                 "--config", self._rules, "--config", str(BUNDLED_RULES)]
         if self._paths is not None:
             argv += self._paths
-        elif self._diff_base is not None:
-            try:
-                changed = _git_changed_files(target, self._diff_base)
-            except Exception as e:  # noqa: BLE001 — 增量信息拿不到就不该盲目全仓扫
-                raise SemgrepError(
-                    f"--diff-base 增量扫描失败: {e}（如需全仓扫描请去掉 --diff-base）"
-                ) from e
-            argv += changed
         else:
-            argv.append(".")
+            # 只扫 Python：目标定位 Python Web 项目，semgrep 规则族对 vendored
+            # JS/HTML 资源误报极高（dogfood 实测 108 候选中 ~70 来自前端静态库）。
+            # paths 模式不覆盖——用户显式指定的文件清单即意图。
+            argv += ["--include", "*.py"]
+            if self._diff_base is not None:
+                # 显式文件清单与 --include 的组合语义不可靠，改为 Python 侧过滤
+                try:
+                    changed = _git_changed_files(target, self._diff_base)
+                except Exception as e:  # noqa: BLE001 — 增量信息拿不到就不该盲目全仓扫
+                    raise SemgrepError(
+                        f"--diff-base 增量扫描失败: {e}（如需全仓扫描请去掉 --diff-base）"
+                    ) from e
+                argv += [f for f in changed if f.endswith(".py")]
+            else:
+                argv.append(".")
         try:
             returncode, stdout, stderr = self._run(argv, target, self._timeout)
         except FileNotFoundError as e:

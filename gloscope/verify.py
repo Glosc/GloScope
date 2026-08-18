@@ -25,6 +25,17 @@ Runner: TypeAlias = Callable[[list[str], Path, dict, float, "str | None"], "tupl
 PROVIDER_ID = "gloscope"
 ENV_KEY = "GLOSCOPE_API_KEY"
 
+# dogfood 实测：codex exec 偶发返回空输出（-o 文件为空/不存在），JSON 解析报
+# "Expecting value: line 1 column 1"——瞬时性问题，重试一次通常能拿到正常输出。
+_MAX_RETRIES = 1
+
+
+def _is_empty_output_error(exc: Exception) -> bool:
+    """空输出特征：json.loads("") 报 "Expecting value: line 1 column 1"。
+    文件缺失（OSError）与非法内容（verdict 缺失/非法等 KeyError/ValueError）
+    不视为瞬时性问题，不重试。"""
+    return isinstance(exc, json.JSONDecodeError) and "line 1 column 1" in str(exc)
+
 # 验证层输出契约（codex --output-schema 要求 strict schema：全字段 required + 禁额外字段）
 OUTPUT_SCHEMA: dict = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -50,9 +61,15 @@ OUTPUT_SCHEMA: dict = {
         "poc_query": {"type": "string", "description": "查询串（不含 ?），如 id=' OR '1'='1"},
         "poc_body": {"type": "string", "description": "请求体（form/JSON 文本）；无则空"},
         "poc_signal": {"type": "string", "description": "差分信号：仅当漏洞被触发时出现在响应中的稳定子串"},
+        "execution_context": {
+            "type": "string",
+            "enum": ["server", "client", "unknown"],
+            "description": "缺陷执行位置：server=服务端 Python 代码；client=浏览器端 JS/模板；unknown=无法确定",
+        },
     },
     "required": ["verdict", "cwe", "taint_path", "confidence", "poc_idea", "explanation",
-                 "poc_method", "poc_path", "poc_query", "poc_body", "poc_signal"],
+                 "poc_method", "poc_path", "poc_query", "poc_body", "poc_signal",
+                 "execution_context"],
     "additionalProperties": False,
 }
 
@@ -67,6 +84,8 @@ PROMPT_TEMPLATE = """你是一名资深 Web 安全审计专家，正在验证一
 4. 判断可达性：路由/入口是否注册、该分支是否可被外部请求触达。
 5. 下结论：只有「污点可达且无有效净化」才 confirmed；能证明净化/不可达则 false_positive；
    证据不足（如关键文件缺失）则 inconclusive。
+6. 判断执行上下文：缺陷代码运行在服务端（Python，如 Flask/Django 视图函数）还是
+   客户端（浏览器执行的 JS、模板文件），无法确定则 unknown——两者风险等级不同。
 
 候选 JSON（来自 semgrep）：
 {candidate_json}
@@ -80,6 +99,7 @@ PROMPT_TEMPLATE = """你是一名资深 Web 安全审计专家，正在验证一
 - explanation: 结论依据（可达性、净化情况等）
 - poc_method/poc_path/poc_query/poc_body/poc_signal: 若 confirmed 且可远程触发，
   给出最小差分请求规格与信号（signal 选仅在漏洞触发时出现的稳定子串）；否则全空串。
+- execution_context: "server" | "client" | "unknown"（缺陷运行位置）
 
 若附有「HTTP 入口索引」，直接引用其中的路由入口（file:line），不必再搜索路由注册。"""
 
@@ -266,13 +286,31 @@ class CodexVerifier:
                     f"codex exec 退出码 {returncode}: {stderr.strip()[:500] or stdout.strip()[:500]}"
                 )
             tokens_in, tokens_out = _parse_tokens(stdout)
-            try:
-                raw = json.loads(out_path.read_text(encoding="utf-8"))
-                verdict = raw["verdict"]
-                if verdict not in ("confirmed", "false_positive", "inconclusive"):
-                    raise ValueError(f"非法 verdict: {verdict!r}")
-            except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
-                return self._inconclusive(f"验证输出不可解析: {e}")
+            retries_left = _MAX_RETRIES
+            while True:
+                try:
+                    raw = json.loads(out_path.read_text(encoding="utf-8"))
+                    verdict = raw["verdict"]
+                    if verdict not in ("confirmed", "false_positive", "inconclusive"):
+                        raise ValueError(f"非法 verdict: {verdict!r}")
+                    break
+                except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+                    if retries_left > 0 and _is_empty_output_error(e):
+                        retries_left -= 1
+                        returncode, retry_stdout, stderr = self._run(
+                            argv, target, env, self._cfg.verify_timeout, prompt
+                        )
+                        if returncode != 0:
+                            return self._inconclusive(
+                                f"codex exec 退出码 {returncode}（retry）: "
+                                f"{stderr.strip()[:500] or retry_stdout.strip()[:500]}"
+                            )
+                        ti, to = _parse_tokens(retry_stdout)
+                        tokens_in += ti
+                        tokens_out += to
+                        continue
+                    suffix = "（已重试一次仍失败）" if retries_left != _MAX_RETRIES else ""
+                    return self._inconclusive(f"验证输出不可解析: {e}{suffix}")
             return Verification(
                 verdict=verdict,
                 cwe=str(raw.get("cwe", "")),
@@ -285,6 +323,7 @@ class CodexVerifier:
                 poc_query=str(raw.get("poc_query", "")),
                 poc_body=str(raw.get("poc_body", "")),
                 poc_signal=str(raw.get("poc_signal", "")),
+                execution_context=str(raw.get("execution_context", "unknown")),
                 model=self._cfg.verify_model,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,

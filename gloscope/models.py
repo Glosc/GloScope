@@ -33,6 +33,10 @@ VULN_CATEGORIES: dict[str, tuple[str, tuple[str, ...]]] = {
     "code_injection": ("CWE-94", ("user-eval", "eval-detected")),
     "deserialization": ("CWE-502", ("pickle", "deserialization",
                                      "insecure-deserialization")),
+    # dogfood（Quokka CMS）实测归纳：验证层对 unknown 候选推断出的真实 CWE，
+    # check_id 片段取自实际 semgrep 输出（javascript/python 规则族各一）
+    "regex_dos": ("CWE-1333", ("regex-dos", "non-literal-regexp", "redos")),
+    "improper_check": ("CWE-706", ("non-literal-import",)),
 }
 
 CWE_TO_CATEGORY: dict[str, str] = {
@@ -115,6 +119,9 @@ class Verification:
     poc_query: str = ""
     poc_body: str = ""
     poc_signal: str = ""
+    # 缺陷执行位置（dogfooding 实测：vendored 前端 JS 的 ReDoS 与服务端漏洞
+    # 风险等级完全不同，报告需区分）：server=服务端 Python / client=浏览器端 / unknown
+    execution_context: str = "unknown"
     error: str | None = None  # 非 None 表示验证过程本身出错（verdict 为 inconclusive）
     model: str = ""
     tokens_in: int = 0
