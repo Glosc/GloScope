@@ -54,6 +54,7 @@ members = [
     "ext/agent",
     "ext/connectors",
     "ext/extension-api",
+    "ext/gloscope-tools",
     "ext/goal",
     "ext/git-attribution",
     "ext/guardian",
@@ -191,6 +192,7 @@ codex-exec-server-test-support = { path = "exec-server/tests/support" }
 codex-execpolicy = { path = "execpolicy" }
 codex-extension-api = { path = "ext/extension-api" }
 codex-extension-items = { path = "ext/items" }
+codex-gloscope-tools = { path = "ext/gloscope-tools" }
 codex-goal-extension = { path = "ext/goal" }
 codex-git-attribution = { path = "ext/git-attribution" }
 codex-guardian = { path = "ext/guardian" }

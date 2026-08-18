@@ -86,6 +86,7 @@ where
         git_attribution_base_url,
         http_client_factory,
     );
+    codex_gloscope_tools::install(&mut builder);
     codex_guardian::install(&mut builder, guardian_agent_spawner);
     codex_memories_extension::install(&mut builder, codex_otel::global());
     codex_mcp_extension::install(&mut builder);

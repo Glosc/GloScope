@@ -2018,6 +2018,7 @@ dependencies = [
  "codex-file-watcher",
  "codex-git-attribution",
  "codex-git-utils",
+ "codex-gloscope-tools",
  "codex-goal-extension",
  "codex-guardian",
  "codex-home",
@@ -3245,6 +3246,23 @@ dependencies = [
  "tokio",
  "ts-rs",
  "walkdir",
+]
+
+[[package]]
+name = "codex-gloscope-tools"
+version = "0.147.0"
+dependencies = [
+ "codex-core",
+ "codex-extension-api",
+ "codex-protocol",
+ "codex-tools",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "which 8.0.0",
 ]
 
 [[package]]
