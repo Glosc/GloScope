@@ -28,6 +28,28 @@
   自定义工具、审计分支逻辑等），持续追踪上游存在合并冲突成本高、
   且上游发布节奏过快，与 GloScope 自身开发节奏不匹配。
 
+## M1 验证：Windows 原样 build
+
+`cargo build --workspace` 在 Windows 上会在 `v8 v150.4.0` 的 build script 失败：
+其下载 `rusty_v8_ptrcomp_sandbox_release_x86_64-pc-windows-msvc.lib.gz` 预编译包时
+从 GitHub Releases 收到 404（已用 GitHub API 直接确认：`rusty_v8` 在
+`v150.4.0` 这个 tag 下只发布了 `rusty_v8_release_*`/`rusty_v8_simdutf_release_*`
+两种变体，没有 `_ptrcomp_` 变体，与 Windows 无关，是上游 `v8`/`rusty_v8` crate
+本身的打包缺口）。
+
+依赖 `v8` 的只有三个 crate：`codex-v8-poc`（独立 PoC，无人依赖）、
+`codex-code-mode-runtime`/`codex-code-mode-host`（沙箱化 JS "code mode"
+工具执行功能，GloScope 不需要这个功能）。排除这三个 crate 后：
+
+```
+cargo build --workspace --exclude codex-code-mode-host \
+  --exclude codex-code-mode-runtime --exclude codex-v8-poc
+```
+
+在 Windows 上干净通过（`Finished dev profile ... in 4m 07s`，exit 0）。
+M1 验证标准（"Windows 上原样 build 通过"）以此为准——`ext/gloscope-tools`
+不会依赖 `code-mode-*`/`v8-poc`，故这个排除对后续里程碑无影响。
+
 ## 后续工作
 
 - `codex-rs/ext/gloscope-tools/`：新增的 GloScope 工具 crate（`run_semgrep`、
