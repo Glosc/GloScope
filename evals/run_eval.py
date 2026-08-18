@@ -20,7 +20,7 @@ import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "legacy-python"))
 
 from gloscope.cli import main as cli_main  # noqa: E402
 from gloscope.metrics import evaluate, format_table, load_ground_truth  # noqa: E402

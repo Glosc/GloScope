@@ -15,8 +15,9 @@ import tempfile
 import tomllib
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
+LEGACY_ROOT = Path(__file__).resolve().parent.parent
+REPO = LEGACY_ROOT.parent
+sys.path.insert(0, str(LEGACY_ROOT))
 sys.path.insert(0, str(REPO / "evals"))
 
 from cve_replay import fetch_fix  # noqa: E402  (未用，仅保持 sys.path 语义)

@@ -8,7 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+LEGACY_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = LEGACY_ROOT.parent
 PAYLOAD = REPO_ROOT / "evals" / "fixtures" / "tiny_app" / "app.py.b64"
 RUN_EVAL = REPO_ROOT / "evals" / "run_eval.py"
 

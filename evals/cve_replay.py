@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Callable, TypeAlias
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "legacy-python"))
 
 from gloscope.cli import main as cli_main  # noqa: E402
 from gloscope.metrics import VULN_CATEGORIES, _finding_category  # noqa: E402
