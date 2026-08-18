@@ -1,7 +1,9 @@
 # 寻幽 (GloScope)
 
-大模型驱动的漏斗式漏洞审计工具：semgrep 候选生成 → LLM 分诊 → codex exec 深度验证 → 报告。
-详见 `README.md` 与 `.scratch/gloscope-v1/spec.md`。
+AI 驱动的对话式代码漏洞审计桌面应用，基于 codex（Rust）分叉 + Tauri 2.0 构建。
+之前完全跑通的固定批处理 Python 实现已归档到 `legacy-python/`，仅作行为规范参照。
+详见 `README.md` 与 `.scratch/gloscope-v3/spec.md`（当前架构）、
+`.scratch/gloscope-v1/spec.md`、`.scratch/gloscope-v2/spec.md`（历史决策记录）。
 
 ## Agent skills
 

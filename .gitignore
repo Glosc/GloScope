@@ -26,3 +26,7 @@ config.local.toml
 # IDE
 .idea/
 .vscode/
+
+# 本地 agent 工具状态（worktree、计划缓存等，非项目内容）
+.claude/
+.zcode/
