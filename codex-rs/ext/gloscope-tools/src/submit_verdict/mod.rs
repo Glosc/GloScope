@@ -4,7 +4,7 @@
 //! failed verification — fail-open into an `inconclusive` [`Verification`]
 //! with an `error` string, so one flaky candidate can't abort a scan.
 
-mod spec;
+pub(crate) mod spec;
 
 use crate::config;
 use crate::config::GloscopeConfig;

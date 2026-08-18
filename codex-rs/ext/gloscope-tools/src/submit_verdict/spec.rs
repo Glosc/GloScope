@@ -16,7 +16,7 @@ verification (never errors out on a real vulnerability question): a failed verif
 back as verdict=\"inconclusive\" with an `error` field explaining why, so a single flaky \
 candidate cannot abort the whole scan.";
 
-fn candidate_schema() -> JsonSchema {
+pub(crate) fn candidate_schema() -> JsonSchema {
     let properties = BTreeMap::from([
         (
             "checkId".to_string(),

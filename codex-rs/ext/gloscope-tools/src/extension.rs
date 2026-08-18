@@ -10,6 +10,7 @@ use codex_extension_api::ToolExecutor;
 
 use crate::run_semgrep::SemgrepTool;
 use crate::submit_verdict::SubmitVerdictTool;
+use crate::triage::TriageTool;
 
 #[derive(Clone, Default)]
 pub(crate) struct GloscopeToolsExtension;
@@ -20,7 +21,11 @@ impl ToolContributor for GloscopeToolsExtension {
         _session_store: &ExtensionData,
         _thread_store: &ExtensionData,
     ) -> Vec<Arc<dyn ToolExecutor<ToolCall>>> {
-        vec![Arc::new(SemgrepTool::new()), Arc::new(SubmitVerdictTool::new())]
+        vec![
+            Arc::new(SemgrepTool::new()),
+            Arc::new(SubmitVerdictTool::new()),
+            Arc::new(TriageTool::new()),
+        ]
     }
 }
 
