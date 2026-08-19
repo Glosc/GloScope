@@ -220,6 +220,13 @@ impl ToolExecutor<ToolCall> for TriageTool {
         create_triage_tool()
     }
 
+    /// Each call is an independent HTTP round trip with no shared mutable
+    /// state (no filesystem writes, unlike `submit_verdict`), so triaging N
+    /// candidates in one model turn is safe to run concurrently.
+    fn supports_parallel_tool_calls(&self) -> bool {
+        true
+    }
+
     fn handle(&self, invocation: ToolCall) -> ToolExecutorFuture<'_> {
         Box::pin(async move {
             let args: TriageArgs = serde_json::from_str(invocation.function_arguments()?)

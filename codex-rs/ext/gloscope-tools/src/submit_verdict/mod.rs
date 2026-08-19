@@ -21,6 +21,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::future::Future;
 use std::io::ErrorKind;
+use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -264,6 +265,18 @@ fn render_prompt(target: &Path, candidate: &CandidateArg) -> Result<String, Exec
         .replace("{candidate_json}", &candidate_json))
 }
 
+/// Serializes writes to `codex-home/config.toml` (see [`write_codex_home`]):
+/// on Windows, concurrent renames onto the same destination path can hit a
+/// transient sharing violation, so within this process only one writer
+/// touches that file at a time. All concurrent `submit_verdict` calls in a
+/// given process write identical content for a given target anyway (same
+/// `GloscopeConfig`), so serializing this one short critical section costs
+/// nothing but does not need to be `async`-aware.
+fn write_codex_home_lock() -> &'static Mutex<()> {
+    static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 /// Writes/refreshes `~/.gloscope/codex-home/config.toml` with the
 /// `model_providers.gloscope` block the nested `codex exec` needs to reach
 /// the user's configured provider. Ported from
@@ -271,17 +284,32 @@ fn render_prompt(target: &Path, candidate: &CandidateArg) -> Result<String, Exec
 /// persistent directory under the user's home, not a temp dir: codex refuses
 /// to create PATH-alias helper binaries under the system temp directory, and
 /// this must stay independent of the user's real `~/.codex`.
-fn write_codex_home(cfg: &GloscopeConfig) -> std::io::Result<PathBuf> {
-    let home = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".gloscope")
-        .join("codex-home");
+///
+/// Writes via a sibling temp file + rename (guarded by
+/// [`write_codex_home_lock`]) rather than a direct truncate-and-write: a
+/// nested `codex exec` spawned by one concurrent call must never observe a
+/// torn/partial write from another.
+fn write_codex_home(cfg: &GloscopeConfig, home_override: Option<&Path>) -> std::io::Result<PathBuf> {
+    let home = match home_override {
+        Some(path) => path.to_path_buf(),
+        None => dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".gloscope")
+            .join("codex-home"),
+    };
     std::fs::create_dir_all(&home)?;
     let config_toml = format!(
         "[model_providers.{PROVIDER_ID}]\nname = \"GloScope user provider\"\nbase_url = \"{}\"\nenv_key = \"{ENV_KEY}\"\nwire_api = \"{}\"\n",
         cfg.base_url, cfg.wire_api,
     );
-    std::fs::write(home.join("config.toml"), config_toml)?;
+    let final_path = home.join("config.toml");
+    let _guard = write_codex_home_lock().lock().expect("lock");
+    let mut tmp = tempfile::Builder::new()
+        .prefix("config.toml.")
+        .suffix(".tmp")
+        .tempfile_in(&home)?;
+    tmp.write_all(config_toml.as_bytes())?;
+    tmp.persist(&final_path).map_err(|err| err.error)?;
     Ok(home)
 }
 
@@ -335,6 +363,11 @@ pub(crate) struct SubmitVerdictTool {
     timeout: Duration,
     runner: ProcessRunner,
     version: VersionCache,
+    /// Overridable for tests, so `cargo test` never touches the developer's
+    /// real `~/.gloscope/codex-home` — without this, concurrent tests (now
+    /// that `supports_parallel_tool_calls` is true, real usage is concurrent
+    /// too) raced on that one shared real path.
+    home_override: Option<PathBuf>,
 }
 
 impl SubmitVerdictTool {
@@ -344,6 +377,7 @@ impl SubmitVerdictTool {
             timeout: Duration::from_secs(600),
             runner: default_runner(),
             version: Mutex::new(None),
+            home_override: None,
         }
     }
 
@@ -354,7 +388,14 @@ impl SubmitVerdictTool {
             timeout: Duration::from_secs(600),
             runner,
             version: Mutex::new(None),
+            home_override: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_home(mut self, home: PathBuf) -> Self {
+        self.home_override = Some(home);
+        self
     }
 
     fn resolve_codex_path(&self) -> String {
@@ -409,7 +450,7 @@ impl SubmitVerdictTool {
             Ok(prompt) => prompt,
             Err(err) => return inconclusive(err.to_string(), &cfg.verify_model),
         };
-        let codex_home = match write_codex_home(cfg) {
+        let codex_home = match write_codex_home(cfg, self.home_override.as_deref()) {
             Ok(home) => home,
             Err(err) => return inconclusive(format!("写入 CODEX_HOME 失败: {err}"), &cfg.verify_model),
         };
@@ -624,6 +665,14 @@ impl ToolExecutor<ToolCall> for SubmitVerdictTool {
 
     fn spec(&self) -> codex_extension_api::ToolSpec {
         create_submit_verdict_tool()
+    }
+
+    /// Each call spawns its own `codex exec` subprocess against its own
+    /// tempdir (`tmpdir`/`out_path`/`schema_path` in `exec()`), so N
+    /// candidates verified in one model turn are safe to run concurrently —
+    /// there is no shared mutable state that requires serialization.
+    fn supports_parallel_tool_calls(&self) -> bool {
+        true
     }
 
     fn handle(&self, invocation: ToolCall) -> ToolExecutorFuture<'_> {
@@ -890,8 +939,21 @@ mod tests {
         }
     }
 
+    /// Fresh, isolated `codex-home` dir per test tool instance. `into_path()`
+    /// deliberately leaks (skips the `TempDir` drop-cleanup): tests run
+    /// concurrently now that `supports_parallel_tool_calls` is true, and a
+    /// shared real `~/.gloscope/codex-home` path was racing across them.
+    fn unique_test_home() -> PathBuf {
+        tempfile::Builder::new()
+            .prefix("gloscope-test-codex-home-")
+            .tempdir()
+            .expect("tempdir")
+            .into_path()
+    }
+
     fn tool_with_fake(fake: &Arc<FakeCodexRunner>) -> SubmitVerdictTool {
         SubmitVerdictTool::with_runner(Some("codex".to_string()), fake.into_runner())
+            .with_home(unique_test_home())
     }
 
     #[tokio::test]
@@ -929,9 +991,8 @@ mod tests {
         let call = &fake.exec_calls()[0];
         assert_eq!(call.env.get("GLOSCOPE_API_KEY").map(String::as_str), Some(FAKE_KEY));
         let home = PathBuf::from(call.env.get("CODEX_HOME").expect("codex home"));
-        let expected_home = dirs::home_dir().expect("home").join(".gloscope").join("codex-home");
+        let expected_home = tool.home_override.clone().expect("test home override");
         assert_eq!(home, expected_home);
-        assert!(!home.starts_with(std::env::temp_dir()));
         let cfg_toml = call.codex_config.clone().expect("codex config snapshot");
         let parsed: toml::Value = toml::from_str(&cfg_toml).expect("valid toml");
         let providers = parsed
@@ -1208,7 +1269,8 @@ mod tests {
         let tool = SubmitVerdictTool::with_runner(
             Some(r"C:\nodejs\codex.CMD".to_string()),
             fake.into_runner(),
-        );
+        )
+        .with_home(unique_test_home());
         let tmp = TempDir::new().expect("tempdir");
         tool.verify(tmp.path(), &cand_fixture(), &cfg_fixture()).await;
         assert_eq!(fake.exec_calls()[0].argv[0], r"C:\nodejs\codex.CMD");
