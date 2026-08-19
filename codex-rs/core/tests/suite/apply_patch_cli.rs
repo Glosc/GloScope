@@ -1354,6 +1354,21 @@ async fn apply_patch_turn_diff_paths_stay_repo_relative_when_session_cwd_is_nest
                 let repo_root = cwd.parent().expect("nested cwd should have parent");
                 let git_uri = PathUri::from_host_native_path(repo_root.join(".git"))?;
                 let repo_file_uri = PathUri::from_host_native_path(repo_root.join("repo.txt"))?;
+                // GloScope fork: the test harness now git-inits every local test
+                // workspace up front (see `git_init_test_workspace` in
+                // `test_codex.rs`), so `repo_root/.git` already exists as a real
+                // directory. Remove it before overwriting it with this test's fake
+                // linked-worktree pointer file, since writing a file over an
+                // existing directory fails (access denied on Windows).
+                fs.remove(
+                    &git_uri,
+                    RemoveOptions {
+                        recursive: true,
+                        force: true,
+                    },
+                    /*sandbox*/ None,
+                )
+                .await?;
                 fs.write_file(
                     &git_uri,
                     b"gitdir: /tmp/fake-worktree\n".to_vec(),

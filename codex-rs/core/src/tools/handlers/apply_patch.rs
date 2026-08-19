@@ -528,6 +528,7 @@ async fn execute_verified_patch(
     tracker: Option<&SharedTurnDiffTracker>,
     tool_ctx: ToolCtx,
 ) -> Result<String, FunctionCallError> {
+    crate::tools::git_safety::ensure_safe_branch_for_patch(&cwd.to_path_buf()).await?;
     let (file_paths, effective_additional_permissions, file_system_sandbox_policy) =
         effective_patch_permissions(tool_ctx.session.as_ref(), &turn_environment, &action, cwd)
             .await

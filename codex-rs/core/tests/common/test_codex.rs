@@ -13,6 +13,7 @@ use std::time::Duration;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
+use anyhow::ensure;
 use codex_config::CloudConfigBundleLoader;
 use codex_core::CodexThread;
 use codex_core::StartThreadOptions;
@@ -122,6 +123,44 @@ pub fn local_selections(cwd: AbsolutePathBuf) -> TurnEnvironmentSelections {
     TurnEnvironmentSelections::new(cwd.clone(), vec![local(cwd)])
 }
 
+/// GloScope fork: `apply_patch` hard-requires its target directory to be a git
+/// repository (`core/src/tools/git_safety.rs`). Real users always work inside
+/// an actual repo, so the local-environment test workspace is git-initialized
+/// here to match that precondition rather than leaving every apply_patch test
+/// to special-case the rejection.
+///
+/// Scope note: this only covers the host-local `TestEnv::local` path. The
+/// Docker/Wine remote-environment path in `test_env()` is not git-initialized
+/// here; those tests are skipped in this environment (`skip_if_no_remote_env`)
+/// and remain an open gap if remote-environment apply_patch testing is wired
+/// up later.
+fn git_init_test_workspace(cwd: &Path) -> Result<()> {
+    let run = |args: &[&str]| -> Result<()> {
+        let output = Command::new("git")
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .with_context(|| format!("failed to run git {args:?} in test workspace"))?;
+        ensure!(
+            output.status.success(),
+            "git {args:?} failed in test workspace: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    };
+    run(&["init", "--quiet", "--initial-branch=main"])?;
+    run(&["config", "user.name", "Codex Test"])?;
+    run(&["config", "user.email", "codex-test@example.com"])?;
+    // apply_patch's git-safety gate treats an unborn branch (no commits yet)
+    // as a no-op, not the protected-branch case it exists for, so seed a
+    // trivial commit to make `main` a real, checked-out branch.
+    std::fs::write(cwd.join(".gitkeep"), "")
+        .with_context(|| "failed to seed .gitkeep in test workspace")?;
+    run(&["add", ".gitkeep"])?;
+    run(&["commit", "--quiet", "-m", "seed"])?;
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct TestEnv {
     environment: codex_exec_server::Environment,
@@ -141,6 +180,11 @@ impl TestEnv {
     /// exec-server URL instead of the normal implicit local executor.
     pub async fn local_with_exec_server_url(exec_server_url: Option<String>) -> Result<Self> {
         let local_cwd_temp_dir = Arc::new(TempDir::new()?);
+        // GloScope fork: `apply_patch` now hard-requires a git repository (see
+        // `core/src/tools/git_safety.rs`), matching real-world usage where users
+        // work inside an actual repo. Git-init the test workspace so apply_patch
+        // integration tests see the same precondition production users have.
+        git_init_test_workspace(local_cwd_temp_dir.path())?;
         let cwd = local_cwd_temp_dir.abs();
         let selection = match exec_server_url {
             Some(_) => TurnEnvironmentSelection {
