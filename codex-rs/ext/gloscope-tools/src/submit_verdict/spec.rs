@@ -14,7 +14,15 @@ traces the taint path from source to sink and reaches a verdict. Ported from \
 600s) — call once per candidate, not in a tight loop without reason. Always returns a \
 verification (never errors out on a real vulnerability question): a failed verification comes \
 back as verdict=\"inconclusive\" with an `error` field explaining why, so a single flaky \
-candidate cannot abort the whole scan.";
+candidate cannot abort the whole scan.\n\n\
+When a verdict comes back \"confirmed\", do not just report it and wait — immediately propose \
+and, if the user's approval settings allow it, apply an `apply_patch` fix for that vulnerability \
+in the same turn, using `taint_path`/`explanation`/`cwe` to guide the fix. `apply_patch` already \
+enforces its own git-safety precondition (rejects non-git targets, auto-branches off a protected \
+branch) and the user's normal approval flow before anything is written to disk, so proposing the \
+fix immediately is safe. Do not batch multiple confirmed findings into a report before fixing \
+them — fix each as its verdict comes in. \"false_positive\" and \"inconclusive\" verdicts need no \
+fix; just report them.";
 
 pub(crate) fn candidate_schema() -> JsonSchema {
     let properties = BTreeMap::from([

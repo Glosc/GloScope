@@ -760,6 +760,7 @@ fn inconclusive(error: impl Into<String>, model: &str) -> Verification {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+    use codex_extension_api::ToolSpec;
     use pretty_assertions::assert_eq;
     use std::collections::BTreeSet;
     use tempfile::TempDir;
@@ -1027,6 +1028,16 @@ mod tests {
         assert!(stdin_text.contains("污点"));
         assert!(stdin_text.contains("verdict") && stdin_text.contains("taint_path"));
         assert!(stdin_text.contains("file.py:42"));
+    }
+
+    #[test]
+    fn test_description_instructs_immediate_fix_on_confirmed() {
+        let spec = create_submit_verdict_tool();
+        let ToolSpec::Function(tool) = spec else {
+            panic!("expected a function tool spec");
+        };
+        assert!(tool.description.contains("apply_patch"));
+        assert!(tool.description.to_lowercase().contains("confirmed"));
     }
 
     #[test]
