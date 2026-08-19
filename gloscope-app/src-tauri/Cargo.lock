@@ -1969,6 +1969,7 @@ dependencies = [
  "codex-file-watcher",
  "codex-git-attribution",
  "codex-git-utils",
+ "codex-gloscope-tools",
  "codex-goal-extension",
  "codex-guardian",
  "codex-home",
@@ -2763,6 +2764,24 @@ dependencies = [
  "tokio",
  "ts-rs",
  "walkdir",
+]
+
+[[package]]
+name = "codex-gloscope-tools"
+version = "0.147.0"
+dependencies = [
+ "codex-core",
+ "codex-extension-api",
+ "codex-tools",
+ "dirs",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "which",
 ]
 
 [[package]]

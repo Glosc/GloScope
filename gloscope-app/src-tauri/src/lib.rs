@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicI64;
 use std::sync::atomic::Ordering;
 
@@ -12,6 +14,8 @@ use codex_app_server_client::InProcessClientStartArgs;
 use codex_app_server_client::InProcessServerEvent;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ConfigWarningNotification;
+use codex_app_server_protocol::FileChangeApprovalDecision;
+use codex_app_server_protocol::FileChangeRequestApprovalResponse;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerRequest;
@@ -50,6 +54,11 @@ struct AppState {
     request_handle: InProcessAppServerRequestHandle,
     next_request_id: AtomicI64,
     thread_id: String,
+    /// `item/fileChange/requestApproval` requests awaiting a decision from the
+    /// frontend, keyed by the request's string-rendered `RequestId`. Only
+    /// this one `ServerRequest` variant is tracked for now (see
+    /// `run_event_loop`) — everything else is still auto-rejected as before.
+    pending_patch_approvals: Mutex<HashMap<String, RequestId>>,
 }
 
 impl AppState {
@@ -126,7 +135,25 @@ fn gloscope_codex_home() -> anyhow::Result<PathBuf> {
     Ok(home)
 }
 
-fn cli_overrides_for_provider(settings: &GloscopeSettings) -> Vec<(String, TomlValue)> {
+/// Bundled model catalog for GloScope's custom (non-OpenAI-catalog) model
+/// slugs, e.g. `deepseek-v4-pro`/`deepseek-v4-flash`. Without this, those
+/// slugs miss the bundled catalog (`models-manager/models.json`) and fall
+/// back to `model_info_from_slug()`, which hardcodes
+/// `apply_patch_tool_type: None` — silently disabling the `apply_patch` tool
+/// for every GloScope session. Written out to `codex_home` at startup so it
+/// can be referenced by an absolute `model_catalog_json` path.
+const MODEL_CATALOG_JSON: &str = include_str!("../resources/model_catalog.json");
+
+fn write_model_catalog(codex_home: &std::path::Path) -> anyhow::Result<PathBuf> {
+    let path = codex_home.join("gloscope_model_catalog.json");
+    std::fs::write(&path, MODEL_CATALOG_JSON)?;
+    Ok(path)
+}
+
+fn cli_overrides_for_provider(
+    settings: &GloscopeSettings,
+    model_catalog_path: &std::path::Path,
+) -> Vec<(String, TomlValue)> {
     vec![
         (
             format!("model_providers.{PROVIDER_ID}.name"),
@@ -149,6 +176,10 @@ fn cli_overrides_for_provider(settings: &GloscopeSettings) -> Vec<(String, TomlV
             TomlValue::String(PROVIDER_ID.to_string()),
         ),
         ("model".to_string(), TomlValue::String(settings.verify_model.clone())),
+        (
+            "model_catalog_json".to_string(),
+            TomlValue::String(model_catalog_path.to_string_lossy().to_string()),
+        ),
     ]
 }
 
@@ -158,7 +189,8 @@ async fn build_config(settings: &GloscopeSettings, codex_home: PathBuf) -> anyho
         std::env::set_var(ENV_KEY, &settings.api_key);
     }
 
-    let cli_overrides = cli_overrides_for_provider(settings);
+    let model_catalog_path = write_model_catalog(&codex_home)?;
+    let cli_overrides = cli_overrides_for_provider(settings, &model_catalog_path);
     let harness_overrides = ConfigOverrides {
         model_provider: Some(PROVIDER_ID.to_string()),
         ..Default::default()
@@ -248,8 +280,11 @@ async fn start_thread(
 }
 
 /// Drains in-process app-server events and forwards the ones the frontend
-/// cares about as Tauri events. Unhandled `ServerRequest` variants are
-/// rejected, matching `codex-rs/exec`'s non-interactive behavior for M2.
+/// cares about as Tauri events. `item/fileChange/requestApproval` (the
+/// apply_patch approval prompt) is surfaced to the frontend and left pending
+/// in `AppState::pending_patch_approvals` until `respond_to_patch_approval`
+/// answers it. Every other `ServerRequest` variant is still rejected,
+/// matching `codex-rs/exec`'s non-interactive behavior for M2.
 async fn run_event_loop(mut client: InProcessAppServerClient, app_handle: tauri::AppHandle) {
     while let Some(event) = client.next_event().await {
         match event {
@@ -260,22 +295,49 @@ async fn run_event_loop(mut client: InProcessAppServerClient, app_handle: tauri:
             }
             InProcessServerEvent::ServerRequest(request) => {
                 let request = *request;
-                let request_id = request.id().clone();
-                let method = serde_json::to_value(&request)
-                    .ok()
-                    .and_then(|v| v.get("method").and_then(|m| m.as_str()).map(str::to_string))
-                    .unwrap_or_else(|| "unknown".to_string());
-                let _ = client
-                    .reject_server_request(
-                        request_id,
-                        JSONRPCErrorError {
-                            code: -32000,
-                            message: format!("`{method}` is not supported by gloscope-app yet"),
-                            data: None,
-                        },
-                    )
-                    .await;
-                let _ = matches!(request, ServerRequest::ChatgptAuthTokensRefresh { .. });
+                match request {
+                    ServerRequest::FileChangeRequestApproval { request_id, params } => {
+                        let key = request_id.to_string();
+                        if let Some(state) = app_handle.try_state::<AppState>() {
+                            state
+                                .pending_patch_approvals
+                                .lock()
+                                .expect("pending_patch_approvals mutex poisoned")
+                                .insert(key.clone(), request_id.clone());
+                        }
+                        if let Ok(value) = serde_json::to_value(&params) {
+                            let mut payload = value;
+                            if let Some(obj) = payload.as_object_mut() {
+                                obj.insert(
+                                    "requestId".to_string(),
+                                    serde_json::Value::String(key),
+                                );
+                            }
+                            let _ = app_handle.emit("gloscope://patchApprovalRequest", payload);
+                        }
+                    }
+                    other => {
+                        let request_id = other.id().clone();
+                        let method = serde_json::to_value(&other)
+                            .ok()
+                            .and_then(|v| {
+                                v.get("method").and_then(|m| m.as_str()).map(str::to_string)
+                            })
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let _ = client
+                            .reject_server_request(
+                                request_id,
+                                JSONRPCErrorError {
+                                    code: -32000,
+                                    message: format!(
+                                        "`{method}` is not supported by gloscope-app yet"
+                                    ),
+                                    data: None,
+                                },
+                            )
+                            .await;
+                    }
+                }
             }
             InProcessServerEvent::Lagged { skipped } => {
                 eprintln!("gloscope-app: dropped {skipped} lagged app-server event(s)");
@@ -307,6 +369,41 @@ async fn send_message(
     Ok(())
 }
 
+/// Answers a pending `item/fileChange/requestApproval` request (an
+/// `apply_patch` approval prompt) surfaced to the frontend via the
+/// `gloscope://patchApprovalRequest` event. `accept` maps to
+/// `FileChangeApprovalDecision::Accept`, anything else to `Decline` — this is
+/// intentionally the two-button minimum (M6b scope), not the full decision
+/// set `codex-rs/tui` exposes (accept-for-session, cancel-and-interrupt).
+#[tauri::command]
+async fn respond_to_patch_approval(
+    request_id: String,
+    accept: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let pending = state
+        .pending_patch_approvals
+        .lock()
+        .expect("pending_patch_approvals mutex poisoned")
+        .remove(&request_id);
+    let Some(pending) = pending else {
+        return Err(format!("no pending patch approval for request {request_id}"));
+    };
+
+    let decision = if accept {
+        FileChangeApprovalDecision::Accept
+    } else {
+        FileChangeApprovalDecision::Decline
+    };
+    let response = FileChangeRequestApprovalResponse { decision };
+    let result = serde_json::to_value(response).map_err(|err| err.to_string())?;
+    state
+        .request_handle
+        .resolve_server_request(pending, result)
+        .await
+        .map_err(|err| err.to_string())
+}
+
 /// codex-core's config/app-server startup recurses deeply enough that it
 /// needs a larger-than-default worker stack (see `codex-rs/arg0`'s
 /// `TOKIO_WORKER_STACK_SIZE_BYTES`, also 16 MiB). Tauri's own async runtime
@@ -318,7 +415,10 @@ const GLOSCOPE_CORE_STACK_SIZE_BYTES: usize = 16 * 1024 * 1024;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![send_message])
+        .invoke_handler(tauri::generate_handler![
+            send_message,
+            respond_to_patch_approval
+        ])
         .setup(|app| {
             let app_handle = app.handle().clone();
             std::thread::Builder::new()
@@ -372,6 +472,7 @@ pub fn run() {
                             request_handle,
                             next_request_id: request_id_seq,
                             thread_id,
+                            pending_patch_approvals: Mutex::new(HashMap::new()),
                         });
 
                         run_event_loop(client, app_handle).await;

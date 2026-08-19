@@ -118,6 +118,47 @@ button {
   max-width: 400px;
 }
 
+.patch-approval {
+  width: min(600px, 90vw);
+  margin: 0 auto 1em;
+  text-align: left;
+  padding: 0.75em;
+  border: 1px solid #e0a030;
+  border-radius: 8px;
+  background-color: #fff8ec;
+}
+
+.patch-approval__header {
+  font-weight: 600;
+  margin-bottom: 0.5em;
+}
+
+.patch-approval__change {
+  margin-bottom: 0.5em;
+}
+
+.patch-approval__path {
+  font-family: monospace;
+  font-size: 0.9em;
+  opacity: 0.8;
+}
+
+.patch-approval__diff {
+  overflow-x: auto;
+  max-height: 240px;
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  padding: 0.5em;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+.patch-approval__actions {
+  display: flex;
+  gap: 0.5em;
+  justify-content: flex-end;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
@@ -135,5 +176,10 @@ button {
   }
   button:active {
     background-color: #0f0f0f69;
+  }
+
+  .patch-approval {
+    border-color: #e0a030;
+    background-color: #2f2b1e;
   }
 }
