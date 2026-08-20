@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 codex-core = { workspace = true }
 codex-extension-api = { workspace = true }
+codex-gloscope-config = { workspace = true }
 codex-tools = { workspace = true }
 dirs = { workspace = true }
 reqwest = { workspace = true, features = ["json", "rustls-tls-native-roots"] }

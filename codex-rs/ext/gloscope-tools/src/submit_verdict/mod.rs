@@ -6,8 +6,6 @@
 
 pub(crate) mod spec;
 
-use crate::config;
-use crate::config::GloscopeConfig;
 use codex_extension_api::FunctionCallError;
 use codex_extension_api::JsonToolOutput;
 use codex_extension_api::ToolCall;
@@ -15,6 +13,7 @@ use codex_extension_api::ToolExecutor;
 use codex_extension_api::ToolExecutorFuture;
 use codex_extension_api::ToolName;
 use codex_extension_api::ToolOutput;
+use codex_gloscope_config::GloscopeConfig;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
@@ -679,7 +678,7 @@ impl ToolExecutor<ToolCall> for SubmitVerdictTool {
         Box::pin(async move {
             let args: SubmitVerdictArgs = serde_json::from_str(invocation.function_arguments()?)
                 .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
-            let cfg = config::load_config(Path::new(&args.target))
+            let cfg = codex_gloscope_config::load_config()
                 .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
             let verification = self.verify(Path::new(&args.target), &args.candidate, &cfg).await;
             let value = serde_json::to_value(&verification)

@@ -2,7 +2,6 @@
 //! (`run_semgrep`, and future `submit_verdict`/`triage` tools) as native
 //! codex `ToolContributor` implementations.
 
-mod config;
 mod extension;
 mod run_semgrep;
 mod submit_verdict;
