@@ -23,6 +23,9 @@ evals/results/
 config.local.toml
 .env
 
+# minisign updater 私钥，绝不入库（只放 GitHub secrets）
+.gloscope-updater.key
+
 # IDE
 .idea/
 .vscode/

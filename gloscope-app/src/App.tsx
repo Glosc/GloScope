@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import SetupWizard from "./SetupWizard";
 import "./App.css";
 
@@ -54,6 +56,8 @@ function App() {
   const [fileChanges, setFileChanges] = useState<Record<string, FileChangeItem>>({});
   const [pendingApprovals, setPendingApprovals] = useState<PatchApprovalRequest[]>([]);
   const [respondingTo, setRespondingTo] = useState<string | null>(null);
+  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
+  const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
     invoke<boolean>("gloscope_is_configured")
@@ -61,6 +65,32 @@ function App() {
       .catch(() => setConfigured(false))
       .finally(() => setCheckingConfig(false));
   }, []);
+
+  useEffect(() => {
+    if (!configured) return;
+    check()
+      .then((update) => {
+        if (update) setPendingUpdate(update);
+      })
+      .catch(() => {
+        /* no update endpoint reachable; ignore */
+      });
+  }, [configured]);
+
+  async function applyUpdate() {
+    if (!pendingUpdate) return;
+    setUpdating(true);
+    try {
+      await pendingUpdate.downloadAndInstall();
+      await relaunch();
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "agent", text: `[error] ${String(err)}` },
+      ]);
+      setUpdating(false);
+    }
+  }
 
   useEffect(() => {
     if (!configured) return;
@@ -172,6 +202,19 @@ function App() {
   return (
     <main className="container">
       <h1>GloScope</h1>
+      {pendingUpdate && (
+        <div className="update-banner">
+          <span>发现新版本 {pendingUpdate.version}，是否现在更新？</span>
+          <div className="update-banner__actions">
+            <button type="button" disabled={updating} onClick={applyUpdate}>
+              {updating ? "更新中..." : "立即更新"}
+            </button>
+            <button type="button" disabled={updating} onClick={() => setPendingUpdate(null)}>
+              稍后
+            </button>
+          </div>
+        </div>
+      )}
       <div className="chat-log">
         {messages.map((m) => (
           <div key={m.id} className={`chat-message chat-message--${m.role}`}>

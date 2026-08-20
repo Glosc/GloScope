@@ -159,6 +159,26 @@ button {
   justify-content: flex-end;
 }
 
+.update-banner {
+  width: min(600px, 90vw);
+  margin: 0 auto 1em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1em;
+  padding: 0.75em;
+  border: 1px solid #396cd8;
+  border-radius: 8px;
+  background-color: #eef3fd;
+  font-size: 0.9em;
+}
+
+.update-banner__actions {
+  display: flex;
+  gap: 0.5em;
+  flex-shrink: 0;
+}
+
 .wizard {
   padding-top: 6vh;
 }
@@ -252,5 +272,10 @@ button {
   .patch-approval {
     border-color: #e0a030;
     background-color: #2f2b1e;
+  }
+
+  .update-banner {
+    border-color: #396cd8;
+    background-color: #1e2530;
   }
 }

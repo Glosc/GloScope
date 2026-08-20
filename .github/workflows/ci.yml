@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  V8_EXCLUDES: >-
+    --exclude codex-code-mode-host
+    --exclude codex-code-mode-runtime
+    --exclude codex-v8-poc
+
+jobs:
+  rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (from rust-toolchain.toml)
+        run: rustup show
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            codex-rs/target
+            gloscope-app/src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('codex-rs/Cargo.lock', 'gloscope-app/src-tauri/Cargo.lock') }}
+
+      - name: cargo build (codex-rs workspace)
+        working-directory: codex-rs
+        run: cargo build --workspace ${{ env.V8_EXCLUDES }}
+
+      - name: cargo test (codex-rs workspace)
+        working-directory: codex-rs
+        run: cargo test --workspace ${{ env.V8_EXCLUDES }}
+
+      - name: cargo build (gloscope-app)
+        working-directory: gloscope-app/src-tauri
+        run: cargo build
+
+  frontend:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: gloscope-app/package-lock.json
+
+      - name: npm ci
+        working-directory: gloscope-app
+        run: npm ci
+
+      - name: tsc --noEmit
+        working-directory: gloscope-app
+        run: npx tsc --noEmit
+
+      - name: npm run build
+        working-directory: gloscope-app
+        run: npm run build
