@@ -33,7 +33,9 @@ codex-cloud-config = { path = "../../codex-rs/cloud-config" }
 codex-config = { path = "../../codex-rs/config" }
 codex-core = { path = "../../codex-rs/core" }
 codex-feedback = { path = "../../codex-rs/feedback" }
+codex-gloscope-config = { path = "../../codex-rs/gloscope-config" }
 codex-http-client = { path = "../../codex-rs/http-client" }
+codex-keyring-store = { path = "../../codex-rs/keyring-store" }
 codex-protocol = { path = "../../codex-rs/protocol" }
 codex-utils-absolute-path = { path = "../../codex-rs/utils/absolute-path" }
 futures = "0.3"

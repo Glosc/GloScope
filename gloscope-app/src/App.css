@@ -159,6 +159,77 @@ button {
   justify-content: flex-end;
 }
 
+.wizard {
+  padding-top: 6vh;
+}
+
+.wizard__intro {
+  width: min(480px, 90vw);
+  margin: 0 auto 1.5em;
+  opacity: 0.8;
+  font-size: 0.9em;
+}
+
+.wizard__form {
+  width: min(480px, 90vw);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9em;
+  text-align: left;
+}
+
+.wizard__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  font-size: 0.9em;
+}
+
+.wizard__field span {
+  font-weight: 500;
+}
+
+.wizard__field em {
+  font-weight: 400;
+  opacity: 0.7;
+  font-style: normal;
+  font-size: 0.85em;
+}
+
+.wizard__field input {
+  width: 100%;
+}
+
+.wizard__advanced-toggle {
+  align-self: flex-start;
+  background: none;
+  box-shadow: none;
+  padding: 0.2em 0;
+  font-size: 0.85em;
+  color: #646cff;
+}
+
+.wizard__advanced-toggle:hover {
+  border-color: transparent;
+  text-decoration: underline;
+}
+
+.wizard__advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9em;
+}
+
+.wizard__error {
+  color: #c0392b;
+  font-size: 0.9em;
+}
+
+.wizard__submit {
+  margin-top: 0.5em;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;

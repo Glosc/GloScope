@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import SetupWizard from "./SetupWizard";
 import "./App.css";
 
 type ChatMessage = {
@@ -42,6 +43,8 @@ type ServerNotification =
   | { method: string; params: unknown };
 
 function App() {
+  const [checkingConfig, setCheckingConfig] = useState(true);
+  const [configured, setConfigured] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -53,6 +56,14 @@ function App() {
   const [respondingTo, setRespondingTo] = useState<string | null>(null);
 
   useEffect(() => {
+    invoke<boolean>("gloscope_is_configured")
+      .then((result) => setConfigured(result))
+      .catch(() => setConfigured(false))
+      .finally(() => setCheckingConfig(false));
+  }, []);
+
+  useEffect(() => {
+    if (!configured) return;
     const unlistenNotification = listen<ServerNotification>("gloscope://notification", (event) => {
       const notification = event.payload;
       switch (notification.method) {
@@ -111,7 +122,7 @@ function App() {
       unlistenNotification.then((fn) => fn());
       unlistenApproval.then((fn) => fn());
     };
-  }, []);
+  }, [configured]);
 
   async function respondToApproval(requestId: string, accept: boolean) {
     setRespondingTo(requestId);
@@ -144,6 +155,18 @@ function App() {
     } finally {
       setSending(false);
     }
+  }
+
+  if (checkingConfig) {
+    return (
+      <main className="container">
+        <h1>GloScope</h1>
+      </main>
+    );
+  }
+
+  if (!configured) {
+    return <SetupWizard onConfigured={() => setConfigured(true)} />;
   }
 
   return (

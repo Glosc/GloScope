@@ -31,6 +31,10 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_feedback::CodexFeedback;
+use codex_gloscope_config::GloscopeConfig;
+use codex_gloscope_config::GloscopeSettings;
+use codex_keyring_store::DefaultKeyringStore;
+use codex_keyring_store::KeyringStore;
 use codex_protocol::protocol::SessionSource;
 use tauri::Emitter;
 use tauri::Manager;
@@ -41,10 +45,67 @@ use toml::Value as TomlValue;
 const PROVIDER_ID: &str = "gloscope";
 const ENV_KEY: &str = "GLOSCOPE_API_KEY";
 
-struct GloscopeSettings {
-    base_url: String,
-    api_key: String,
-    verify_model: String,
+fn keyring_store() -> Arc<dyn KeyringStore> {
+    Arc::new(DefaultKeyringStore)
+}
+
+/// `true` once the wizard has saved settings and an API key is reachable
+/// (keyring or `GLOSCOPE_API_KEY` env var) — i.e. `load_config()` would
+/// succeed. The frontend uses this to decide whether to show the wizard or
+/// the chat view on startup.
+#[tauri::command]
+fn gloscope_is_configured() -> bool {
+    codex_gloscope_config::load_config().is_ok()
+}
+
+/// Non-secret settings for prefilling the wizard form when the user reopens
+/// it to edit an existing configuration. Errors (including "not configured
+/// yet") are reported as a string so the frontend can just show a blank form.
+#[tauri::command]
+fn gloscope_load_settings() -> Result<GloscopeSettings, String> {
+    codex_gloscope_config::load_settings(&codex_gloscope_config::gloscope_home())
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn gloscope_save_settings(settings: GloscopeSettings) -> Result<(), String> {
+    codex_gloscope_config::save_settings(&codex_gloscope_config::gloscope_home(), &settings)
+        .map_err(|err| err.to_string())
+}
+
+/// Whether an API key is already stored in the keyring, without ever
+/// returning the key value itself to the frontend.
+#[tauri::command]
+fn gloscope_has_api_key() -> Result<bool, String> {
+    codex_gloscope_config::load_api_key(&codex_gloscope_config::gloscope_home(), keyring_store())
+        .map(|key| key.is_some())
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn gloscope_save_api_key(api_key: String) -> Result<(), String> {
+    codex_gloscope_config::save_api_key(
+        &codex_gloscope_config::gloscope_home(),
+        keyring_store(),
+        &api_key,
+    )
+    .map_err(|err| err.to_string())
+}
+
+/// Starts the gloscope-core thread (config load → app-server → thread/start)
+/// once the wizard has finished saving settings/API key. A no-op if the
+/// session is already running (e.g. this is called again after the user
+/// re-opens the wizard to edit settings).
+#[tauri::command]
+async fn gloscope_start_session(app_handle: tauri::AppHandle) -> Result<(), String> {
+    if app_handle.try_state::<AppState>().is_some() {
+        return Ok(());
+    }
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    spawn_gloscope_core(app_handle, Some(ready_tx));
+    ready_rx
+        .await
+        .map_err(|_| "gloscope-core thread exited without reporting status".to_string())?
 }
 
 /// State shared with Tauri commands. The `InProcessAppServerClient` itself is
@@ -65,67 +126,6 @@ impl AppState {
     fn next_id(&self) -> RequestId {
         RequestId::Integer(self.next_request_id.fetch_add(1, Ordering::SeqCst))
     }
-}
-
-/// Reads `[provider]`/`[models]` from `gloscope.toml`/`config.local.toml`,
-/// searching the current directory and its ancestors (mirrors
-/// `legacy-python/gloscope/config.py::_find_config_file`, generalized to walk
-/// up from wherever the Tauri process happens to be launched).
-fn load_gloscope_settings() -> anyhow::Result<GloscopeSettings> {
-    const CONFIG_FILENAMES: [&str; 2] = ["gloscope.toml", "config.local.toml"];
-
-    let mut dir = std::env::current_dir()?;
-    let config_path = loop {
-        let found = CONFIG_FILENAMES
-            .iter()
-            .map(|name| dir.join(name))
-            .find(|path| path.is_file());
-        if let Some(path) = found {
-            break path;
-        }
-        if !dir.pop() {
-            anyhow::bail!(
-                "no gloscope.toml / config.local.toml found in {:?} or any ancestor directory",
-                std::env::current_dir()?
-            );
-        }
-    };
-
-    let raw = std::fs::read_to_string(&config_path)?;
-    let parsed: TomlValue = toml::from_str(&raw)?;
-
-    let provider = parsed.get("provider");
-    let models = parsed.get("models");
-
-    let base_url = provider
-        .and_then(|p| p.get("base_url"))
-        .and_then(TomlValue::as_str)
-        .ok_or_else(|| anyhow::anyhow!("config missing [provider] base_url"))?
-        .to_string();
-    let api_key = provider
-        .and_then(|p| p.get("api_key"))
-        .and_then(TomlValue::as_str)
-        .map(str::to_string)
-        .or_else(|| std::env::var(ENV_KEY).ok())
-        .ok_or_else(|| {
-            anyhow::anyhow!("config missing [provider] api_key (or {ENV_KEY} env var)")
-        })?;
-    let triage_model = models
-        .and_then(|m| m.get("triage_model"))
-        .and_then(TomlValue::as_str)
-        .map(str::to_string);
-    let verify_model = models
-        .and_then(|m| m.get("verify_model"))
-        .and_then(TomlValue::as_str)
-        .map(str::to_string)
-        .or(triage_model)
-        .ok_or_else(|| anyhow::anyhow!("config missing [models] triage_model/verify_model"))?;
-
-    Ok(GloscopeSettings {
-        base_url,
-        api_key,
-        verify_model,
-    })
 }
 
 fn gloscope_codex_home() -> anyhow::Result<PathBuf> {
@@ -151,7 +151,7 @@ fn write_model_catalog(codex_home: &std::path::Path) -> anyhow::Result<PathBuf> 
 }
 
 fn cli_overrides_for_provider(
-    settings: &GloscopeSettings,
+    config: &GloscopeConfig,
     model_catalog_path: &std::path::Path,
 ) -> Vec<(String, TomlValue)> {
     vec![
@@ -161,7 +161,7 @@ fn cli_overrides_for_provider(
         ),
         (
             format!("model_providers.{PROVIDER_ID}.base_url"),
-            TomlValue::String(settings.base_url.clone()),
+            TomlValue::String(config.base_url.clone()),
         ),
         (
             format!("model_providers.{PROVIDER_ID}.env_key"),
@@ -169,13 +169,13 @@ fn cli_overrides_for_provider(
         ),
         (
             format!("model_providers.{PROVIDER_ID}.wire_api"),
-            TomlValue::String("responses".to_string()),
+            TomlValue::String(config.wire_api.clone()),
         ),
         (
             "model_provider".to_string(),
             TomlValue::String(PROVIDER_ID.to_string()),
         ),
-        ("model".to_string(), TomlValue::String(settings.verify_model.clone())),
+        ("model".to_string(), TomlValue::String(config.verify_model.clone())),
         (
             "model_catalog_json".to_string(),
             TomlValue::String(model_catalog_path.to_string_lossy().to_string()),
@@ -183,14 +183,14 @@ fn cli_overrides_for_provider(
     ]
 }
 
-async fn build_config(settings: &GloscopeSettings, codex_home: PathBuf) -> anyhow::Result<Config> {
+async fn build_config(config: &GloscopeConfig, codex_home: PathBuf) -> anyhow::Result<Config> {
     // SAFETY: single-threaded startup, before any other task reads this var.
     unsafe {
-        std::env::set_var(ENV_KEY, &settings.api_key);
+        std::env::set_var(ENV_KEY, &config.api_key);
     }
 
     let model_catalog_path = write_model_catalog(&codex_home)?;
-    let cli_overrides = cli_overrides_for_provider(settings, &model_catalog_path);
+    let cli_overrides = cli_overrides_for_provider(config, &model_catalog_path);
     let harness_overrides = ConfigOverrides {
         model_provider: Some(PROVIDER_ID.to_string()),
         ..Default::default()
@@ -411,74 +411,99 @@ async fn respond_to_patch_approval(
 /// on a dedicated OS thread with its own single-threaded tokio runtime.
 const GLOSCOPE_CORE_STACK_SIZE_BYTES: usize = 16 * 1024 * 1024;
 
+/// Runs config load → app-server startup → thread/start → event loop on a
+/// dedicated OS thread (see [`GLOSCOPE_CORE_STACK_SIZE_BYTES`]). `ready_tx`,
+/// when present, is used to report success/failure of everything up to
+/// `AppState` being managed, so `gloscope_start_session` can await it instead
+/// of returning before the session is actually usable.
+fn spawn_gloscope_core(
+    app_handle: tauri::AppHandle,
+    ready_tx: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
+) {
+    std::thread::Builder::new()
+        .name("gloscope-core".to_string())
+        .stack_size(GLOSCOPE_CORE_STACK_SIZE_BYTES)
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build gloscope-core tokio runtime");
+            rt.block_on(async move {
+                macro_rules! try_or_report {
+                    ($expr:expr, $ctx:literal) => {
+                        match $expr {
+                            Ok(value) => value,
+                            Err(err) => {
+                                let message = format!("gloscope-app: {}: {err}", $ctx);
+                                eprintln!("{message}");
+                                if let Some(tx) = ready_tx {
+                                    let _ = tx.send(Err(message));
+                                }
+                                return;
+                            }
+                        }
+                    };
+                }
+
+                let gloscope_config = try_or_report!(
+                    codex_gloscope_config::load_config(),
+                    "failed to load config"
+                );
+                let codex_home =
+                    try_or_report!(gloscope_codex_home(), "failed to resolve codex home");
+                let config = try_or_report!(
+                    build_config(&gloscope_config, codex_home).await,
+                    "failed to build config"
+                );
+                let client = try_or_report!(
+                    start_app_server(config.clone()).await,
+                    "failed to start app-server"
+                );
+                let request_id_seq = AtomicI64::new(1);
+                let thread_id = try_or_report!(
+                    start_thread(&client, &config, &request_id_seq).await,
+                    "failed to start thread"
+                );
+
+                let request_handle = client.request_handle();
+                app_handle.manage(AppState {
+                    request_handle,
+                    next_request_id: request_id_seq,
+                    thread_id,
+                    pending_patch_approvals: Mutex::new(HashMap::new()),
+                });
+
+                if let Some(tx) = ready_tx {
+                    let _ = tx.send(Ok(()));
+                }
+
+                run_event_loop(client, app_handle).await;
+            });
+        })
+        .expect("failed to spawn gloscope-core thread");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             send_message,
-            respond_to_patch_approval
+            respond_to_patch_approval,
+            gloscope_is_configured,
+            gloscope_load_settings,
+            gloscope_save_settings,
+            gloscope_has_api_key,
+            gloscope_save_api_key,
+            gloscope_start_session
         ])
         .setup(|app| {
-            let app_handle = app.handle().clone();
-            std::thread::Builder::new()
-                .name("gloscope-core".to_string())
-                .stack_size(GLOSCOPE_CORE_STACK_SIZE_BYTES)
-                .spawn(move || {
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .expect("failed to build gloscope-core tokio runtime");
-                    rt.block_on(async move {
-                        let settings = match load_gloscope_settings() {
-                    Ok(settings) => settings,
-                    Err(err) => {
-                        eprintln!("gloscope-app: failed to load config: {err}");
-                        return;
-                    }
-                };
-                let codex_home = match gloscope_codex_home() {
-                    Ok(path) => path,
-                    Err(err) => {
-                        eprintln!("gloscope-app: failed to resolve codex home: {err}");
-                        return;
-                    }
-                };
-                let config = match build_config(&settings, codex_home).await {
-                    Ok(config) => config,
-                    Err(err) => {
-                        eprintln!("gloscope-app: failed to build config: {err}");
-                        return;
-                    }
-                };
-                let client = match start_app_server(config.clone()).await {
-                    Ok(client) => client,
-                    Err(err) => {
-                        eprintln!("gloscope-app: failed to start app-server: {err}");
-                        return;
-                    }
-                };
-                let request_id_seq = AtomicI64::new(1);
-                let thread_id = match start_thread(&client, &config, &request_id_seq).await {
-                    Ok(id) => id,
-                    Err(err) => {
-                        eprintln!("gloscope-app: failed to start thread: {err}");
-                        return;
-                    }
-                };
-
-                        let request_handle = client.request_handle();
-                        app_handle.manage(AppState {
-                            request_handle,
-                            next_request_id: request_id_seq,
-                            thread_id,
-                            pending_patch_approvals: Mutex::new(HashMap::new()),
-                        });
-
-                        run_event_loop(client, app_handle).await;
-                    });
-                })
-                .expect("failed to spawn gloscope-core thread");
+            // Only auto-start the session if the wizard has already run in a
+            // previous launch. Otherwise the frontend shows the wizard first
+            // and calls `gloscope_start_session` once it's done.
+            if codex_gloscope_config::load_config().is_ok() {
+                spawn_gloscope_core(app.handle().clone(), None);
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
