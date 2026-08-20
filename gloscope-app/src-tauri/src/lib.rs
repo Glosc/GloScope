@@ -183,7 +183,10 @@ fn cli_overrides_for_provider(
     ]
 }
 
-async fn build_config(config: &GloscopeConfig, codex_home: PathBuf) -> anyhow::Result<Config> {
+async fn build_config(
+    config: &GloscopeConfig,
+    codex_home: PathBuf,
+) -> anyhow::Result<(Config, Vec<(String, TomlValue)>)> {
     // SAFETY: single-threaded startup, before any other task reads this var.
     unsafe {
         std::env::set_var(ENV_KEY, &config.api_key);
@@ -198,16 +201,19 @@ async fn build_config(config: &GloscopeConfig, codex_home: PathBuf) -> anyhow::R
 
     let config = ConfigBuilder::default()
         .codex_home(codex_home)
-        .cli_overrides(cli_overrides)
+        .cli_overrides(cli_overrides.clone())
         .harness_overrides(harness_overrides)
         .loader_overrides(LoaderOverrides::default())
         .cloud_config_bundle(CloudConfigBundleLoader::default())
         .build()
         .await?;
-    Ok(config)
+    Ok((config, cli_overrides))
 }
 
-async fn start_app_server(config: Config) -> anyhow::Result<InProcessAppServerClient> {
+async fn start_app_server(
+    config: Config,
+    cli_overrides: Vec<(String, TomlValue)>,
+) -> anyhow::Result<InProcessAppServerClient> {
     let config_warnings: Vec<ConfigWarningNotification> = config
         .startup_warnings
         .iter()
@@ -236,7 +242,7 @@ async fn start_app_server(config: Config) -> anyhow::Result<InProcessAppServerCl
             ..Default::default()
         },
         config: Arc::new(config.clone()),
-        cli_overrides: Vec::new(),
+        cli_overrides,
         loader_overrides: LoaderOverrides::default(),
         strict_config: false,
         cloud_config_bundle: CloudConfigBundleLoader::default(),
@@ -451,12 +457,12 @@ fn spawn_gloscope_core(
                 );
                 let codex_home =
                     try_or_report!(gloscope_codex_home(), "failed to resolve codex home");
-                let config = try_or_report!(
+                let (config, cli_overrides) = try_or_report!(
                     build_config(&gloscope_config, codex_home).await,
                     "failed to build config"
                 );
                 let client = try_or_report!(
-                    start_app_server(config.clone()).await,
+                    start_app_server(config.clone(), cli_overrides).await,
                     "failed to start app-server"
                 );
                 let request_id_seq = AtomicI64::new(1);
