@@ -302,7 +302,7 @@ fn write_codex_home(cfg: &GloscopeConfig, home_override: Option<&Path>) -> std::
         cfg.base_url, cfg.wire_api,
     );
     let final_path = home.join("config.toml");
-    let _guard = write_codex_home_lock().lock().expect("lock");
+    let _guard = write_codex_home_lock().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut tmp = tempfile::Builder::new()
         .prefix("config.toml.")
         .suffix(".tmp")
@@ -331,8 +331,8 @@ fn parse_tokens(stdout: &str) -> (u64, u64) {
             continue;
         };
         if usage.get("input_tokens").is_some() {
-            tokens_in += usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-            tokens_out += usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+            tokens_in += usage.get("input_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            tokens_out += usage.get("output_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0);
         }
     }
     (tokens_in, tokens_out)
@@ -367,6 +367,10 @@ pub(crate) struct SubmitVerdictTool {
     /// that `supports_parallel_tool_calls` is true, real usage is concurrent
     /// too) raced on that one shared real path.
     home_override: Option<PathBuf>,
+    /// Generated once per tool instance (i.e. once per `tools()` construction
+    /// — in practice once per thread), so every `submit_verdict` call in one
+    /// scan appends to the same `findings.jsonl` run directory.
+    run_id: String,
 }
 
 impl SubmitVerdictTool {
@@ -377,6 +381,7 @@ impl SubmitVerdictTool {
             runner: default_runner(),
             version: Mutex::new(None),
             home_override: None,
+            run_id: generate_run_id(),
         }
     }
 
@@ -388,6 +393,7 @@ impl SubmitVerdictTool {
             runner,
             version: Mutex::new(None),
             home_override: None,
+            run_id: generate_run_id(),
         }
     }
 
@@ -411,7 +417,7 @@ impl SubmitVerdictTool {
     /// broken install is reported once per tool instance, not once per
     /// candidate.
     async fn probe_version(&self, codex_path: &str) -> Result<String, String> {
-        if let Some(cached) = self.version.lock().expect("lock").clone() {
+        if let Some(cached) = self.version.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone() {
             return cached;
         }
         let argv = vec![codex_path.to_string(), "--version".to_string()];
@@ -422,7 +428,7 @@ impl SubmitVerdictTool {
             Ok((code, _, _)) => Err(format!("codex --version 退出码 {code}：codex 安装可能损坏")),
             Err(err) => Err(format!("codex 版本探测失败: {err}")),
         };
-        *self.version.lock().expect("lock") = Some(result.clone());
+        *self.version.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(result.clone());
         result
     }
 
@@ -586,6 +592,39 @@ impl SubmitVerdictTool {
     }
 }
 
+/// One id per tool instance (i.e. per scan session), so every
+/// `submit_verdict` call within that session appends to the same run
+/// directory. Millisecond epoch timestamp is unique enough for this purpose
+/// and sorts chronologically as a directory name.
+fn generate_run_id() -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{millis}")
+}
+
+/// Appends this candidate's verdict to `<target>/.gloscope/scans/<run_id>/
+/// findings.jsonl`, one JSON object per line. First real implementation of
+/// the local-report path described (but never built) in `gloscope-app`'s
+/// architecture notes. Best-effort: a write failure here must never fail the
+/// `submit_verdict` tool call itself, since the model still needs the
+/// verdict back to keep reasoning.
+fn append_finding(
+    target: &Path,
+    run_id: &str,
+    candidate: &CandidateArg,
+    verification: &Verification,
+) -> std::io::Result<()> {
+    let dir = target.join(".gloscope").join("scans").join(run_id);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("findings.jsonl");
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+    let line = json!({ "candidate": candidate, "verification": verification });
+    writeln!(file, "{line}")?;
+    Ok(())
+}
+
 fn truncate(s: &str) -> Option<String> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
@@ -680,7 +719,14 @@ impl ToolExecutor<ToolCall> for SubmitVerdictTool {
                 .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
             let cfg = codex_gloscope_config::load_config()
                 .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
-            let verification = self.verify(Path::new(&args.target), &args.candidate, &cfg).await;
+            let target = Path::new(&args.target);
+            let verification = self.verify(target, &args.candidate, &cfg).await;
+            let write_target = std::fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
+            if let Err(err) =
+                append_finding(&write_target, &self.run_id, &args.candidate, &verification)
+            {
+                tracing::warn!("failed to append finding to findings.jsonl: {err}");
+            }
             let value = serde_json::to_value(&verification)
                 .map_err(|err| FunctionCallError::Fatal(err.to_string()))?;
             Ok(Box::new(JsonToolOutput::new(value)) as Box<dyn ToolOutput>)
@@ -715,12 +761,11 @@ async fn spawn_and_collect(
         Err(err) => return Err(ExecError::Io(err.to_string())),
     };
 
-    if let Some(text) = stdin_text {
-        if let Some(mut stdin) = child.stdin.take() {
-            if let Err(err) = stdin.write_all(text.as_bytes()).await {
-                return Err(ExecError::Io(err.to_string()));
-            }
-        }
+    if let Some(text) = stdin_text
+        && let Some(mut stdin) = child.stdin.take()
+        && let Err(err) = stdin.write_all(text.as_bytes()).await
+    {
+        return Err(ExecError::Io(err.to_string()));
     }
 
     match timeout(timeout_duration, child.wait_with_output()).await {
@@ -887,13 +932,11 @@ mod tests {
             stdin_text: Option<String>,
         ) -> Result<(i32, String, String), ExecError> {
             let is_exec = argv.iter().any(|a| a == "exec");
-            if is_exec {
-                if let Some(exc) = self.raise_exc {
-                    return Err(match exc {
-                        FakeExc::Timeout => ExecError::Timeout(timeout_duration),
-                        FakeExc::NotFound => ExecError::NotFound,
-                    });
-                }
+            if is_exec && let Some(exc) = self.raise_exc {
+                return Err(match exc {
+                    FakeExc::Timeout => ExecError::Timeout(timeout_duration),
+                    FakeExc::NotFound => ExecError::NotFound,
+                });
             }
             if argv.iter().any(|a| a == "--version") {
                 let out = if self.version_returncode == 0 {
@@ -915,16 +958,14 @@ mod tests {
             let codex_config = env.get("CODEX_HOME").map(|home| {
                 std::fs::read_to_string(Path::new(home).join("config.toml")).unwrap_or_default()
             });
-            if !self.dont_write {
-                if let Some(pos) = argv.iter().position(|a| a == "-o") {
-                    let out_path = PathBuf::from(&argv[pos + 1]);
-                    let mut empty_writes = self.empty_writes.lock().expect("lock");
-                    if *empty_writes > 0 {
-                        *empty_writes -= 1;
-                        let _ = std::fs::write(&out_path, "");
-                    } else {
-                        let _ = std::fs::write(&out_path, self.result.to_string());
-                    }
+            if !self.dont_write && let Some(pos) = argv.iter().position(|a| a == "-o") {
+                let out_path = PathBuf::from(&argv[pos + 1]);
+                let mut empty_writes = self.empty_writes.lock().expect("lock");
+                if *empty_writes > 0 {
+                    *empty_writes -= 1;
+                    let _ = std::fs::write(&out_path, "");
+                } else {
+                    let _ = std::fs::write(&out_path, self.result.to_string());
                 }
             }
             self.calls.lock().expect("lock").push(ExecCall {
@@ -948,7 +989,7 @@ mod tests {
             .prefix("gloscope-test-codex-home-")
             .tempdir()
             .expect("tempdir")
-            .into_path()
+            .keep()
     }
 
     fn tool_with_fake(fake: &Arc<FakeCodexRunner>) -> SubmitVerdictTool {
@@ -1053,7 +1094,7 @@ mod tests {
             "poc_method", "poc_path", "poc_query", "poc_body", "poc_signal", "execution_context",
         ]
         .iter()
-        .map(|s| s.to_string())
+        .map(ToString::to_string)
         .collect();
         assert_eq!(required, expected);
         assert_eq!(schema["additionalProperties"], json!(false));
@@ -1065,7 +1106,7 @@ mod tests {
             .collect();
         assert_eq!(
             verdict_enum,
-            ["confirmed", "false_positive", "inconclusive"].iter().map(|s| s.to_string()).collect()
+            ["confirmed", "false_positive", "inconclusive"].iter().map(ToString::to_string).collect()
         );
         let confidence_enum: BTreeSet<String> = schema["properties"]["confidence"]["enum"]
             .as_array()
@@ -1073,14 +1114,14 @@ mod tests {
             .iter()
             .map(|v| v.as_str().expect("string").to_string())
             .collect();
-        assert_eq!(confidence_enum, ["high", "medium", "low"].iter().map(|s| s.to_string()).collect());
+        assert_eq!(confidence_enum, ["high", "medium", "low"].iter().map(ToString::to_string).collect());
         let context_enum: BTreeSet<String> = schema["properties"]["execution_context"]["enum"]
             .as_array()
             .expect("enum array")
             .iter()
             .map(|v| v.as_str().expect("string").to_string())
             .collect();
-        assert_eq!(context_enum, ["server", "client", "unknown"].iter().map(|s| s.to_string()).collect());
+        assert_eq!(context_enum, ["server", "client", "unknown"].iter().map(ToString::to_string).collect());
         for field in ["poc_method", "poc_path", "poc_query", "poc_body", "poc_signal"] {
             assert_eq!(schema["properties"][field]["type"], json!("string"));
         }
@@ -1263,8 +1304,8 @@ mod tests {
         tool.verify(tmp.path(), &cand_fixture(), &cfg_fixture()).await;
         tool.verify(tmp.path(), &cand_fixture(), &cfg_fixture()).await;
         let all_calls = fake.all_calls();
-        let version_calls: Vec<_> = all_calls.iter().filter(|c| c.argv.iter().any(|a| a == "--version")).collect();
-        assert_eq!(version_calls.len(), 1);
+        let version_calls = all_calls.iter().filter(|c| c.argv.iter().any(|a| a == "--version")).count();
+        assert_eq!(version_calls, 1);
         assert_eq!(fake.exec_calls().len(), 2);
         assert_eq!(&all_calls[0].argv[..2], ["codex".to_string(), "--version".to_string()]);
     }
@@ -1311,5 +1352,29 @@ mod tests {
         let c_idx = argv.iter().position(|a| a == "-C").expect("has -C");
         let expected = base.join("t");
         assert_eq!(argv[c_idx + 1], expected.display().to_string());
+    }
+
+    #[test]
+    fn test_append_finding_writes_jsonl_and_appends_on_second_call() {
+        let tmp = TempDir::new().expect("tempdir");
+        let target = tmp.path();
+        let run_id = "test-run-id";
+        let candidate = cand_fixture();
+        let verification = inconclusive("test error", "deepseek-reasoner");
+
+        append_finding(target, run_id, &candidate, &verification).expect("first append");
+        let findings_path = target.join(".gloscope").join("scans").join(run_id).join("findings.jsonl");
+        let contents = std::fs::read_to_string(&findings_path).expect("read findings");
+        let lines: Vec<&str> = contents.lines().collect();
+        assert_eq!(lines.len(), 1);
+        let parsed: serde_json::Value = serde_json::from_str(lines[0]).expect("parse line");
+        assert_eq!(parsed["candidate"]["checkId"], json!(candidate.check_id));
+        assert_eq!(parsed["candidate"]["path"], json!(candidate.path));
+        assert_eq!(parsed["verification"]["verdict"], json!("inconclusive"));
+        assert_eq!(parsed["verification"]["error"], json!("test error"));
+
+        append_finding(target, run_id, &candidate, &verification).expect("second append");
+        let contents = std::fs::read_to_string(&findings_path).expect("read findings again");
+        assert_eq!(contents.lines().count(), 2);
     }
 }

@@ -164,9 +164,7 @@ impl TriageTool {
             "temperature": 0,
         });
         let url = chat_completions_url(&cfg.base_url);
-        let (status, text) = (self.http)(url, cfg.api_key.clone(), body, cfg.triage_timeout)
-            .await
-            .map_err(|err| err)?;
+        let (status, text) = (self.http)(url, cfg.api_key.clone(), body, cfg.triage_timeout).await?;
         if status != 200 {
             let truncated: String = text.chars().take(200).collect();
             return Err(format!("HTTP {status}: {truncated}"));
@@ -180,7 +178,7 @@ impl TriageTool {
             serde_json::from_str(&fenced).map_err(|err| err.to_string())?;
         let keep = parsed
             .get("keep")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .ok_or_else(|| "响应缺少 keep 字段".to_string())?;
         let reason = parsed
             .get("reason")
@@ -188,8 +186,8 @@ impl TriageTool {
             .unwrap_or("")
             .to_string();
         let usage = data.get("usage").cloned().unwrap_or(json!({}));
-        let tokens_in = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-        let tokens_out = usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let tokens_in = usage.get("prompt_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let tokens_out = usage.get("completion_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0);
         Ok(TriageResult {
             keep,
             reason,
@@ -337,9 +335,9 @@ mod tests {
             Arc::new(move |url, bearer_token, body, timeout_duration| {
                 let this = Arc::clone(&this);
                 *this.last.lock().expect("lock") = Some(RecordedCall {
-                    url: url.clone(),
-                    bearer_token: bearer_token.clone(),
-                    body: body.clone(),
+                    url,
+                    bearer_token,
+                    body,
                     timeout: timeout_duration,
                 });
                 let result = match &this.outcome {

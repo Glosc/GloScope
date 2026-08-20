@@ -4,29 +4,84 @@
   # 离线：对一份 scan 报告回放指标
   python evals/run_eval.py --report reports/report.json
 
-  # 在线：物化 tiny_app 靶场 → 跑完整漏斗 → 输出指标
+  # 在线（legacy Python 栈）：物化 tiny_app 靶场 → 跑完整漏斗 → 输出指标
   python evals/run_eval.py --live --config config.local.toml
 
   # 在线扫描自定义靶场（如 pygoat）
   python evals/run_eval.py --live --target /path/to/pygoat --config config.local.toml
+
+  # 在线（新 Rust/Tauri 栈）：headless gloscope-scan → 适配器 → 指标
+  python evals/run_eval.py --rust-scan --target /path/to/pygoat
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "legacy-python"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gloscope.cli import main as cli_main  # noqa: E402
 from gloscope.metrics import evaluate, format_table, load_ground_truth  # noqa: E402
 from gloscope.report import report_from_json  # noqa: E402
 
+from rust_report_adapter import build_report  # noqa: E402
+
 FIXTURE_PAYLOAD = Path(__file__).resolve().parent / "fixtures" / "tiny_app" / "app.py.b64"
+CODEX_RS_ROOT = REPO_ROOT / "codex-rs"
+
+
+def resolve_gloscope_scan_path(explicit: str | None) -> Path:
+    """定位 `gloscope-scan` 二进制：显式路径优先，否则按 cargo 默认 target 布局
+    （`codex-rs/target/{debug,release}/gloscope-scan[.exe]`）猜测，找不到就报错要求
+    先 `cargo build -p codex-gloscope-scan`（不在这里自动触发构建——构建耗时以分钟计，
+    不应该悄悄发生在一次评测调用里）。"""
+    if explicit:
+        path = Path(explicit)
+        if not path.is_file():
+            raise FileNotFoundError(f"--gloscope-scan-path 指定的文件不存在: {path}")
+        return path
+
+    exe_name = "gloscope-scan.exe" if sys.platform == "win32" else "gloscope-scan"
+    for profile in ("release", "debug"):
+        candidate = CODEX_RS_ROOT / "target" / profile / exe_name
+        if candidate.is_file():
+            return candidate
+
+    raise FileNotFoundError(
+        "找不到 gloscope-scan 二进制。请先在 codex-rs/ 下运行 "
+        "`cargo build -p codex-gloscope-scan`（或 --release），"
+        "或用 --gloscope-scan-path 显式指定路径。"
+    )
+
+
+def run_rust_scan(gloscope_scan_path: Path, target: Path, gloscope_config: str | None) -> int:
+    argv = [str(gloscope_scan_path), "--target", str(target)]
+    if gloscope_config:
+        argv += ["--config", gloscope_config]
+    proc = subprocess.run(argv, shell=False)
+    return proc.returncode
+
+
+def find_latest_findings_jsonl(target: Path) -> Path:
+    """`gloscope-scan` 把 findings 写到 `<target>/.gloscope/scans/<run_id>/
+    findings.jsonl`；run_id 是毫秒时间戳目录名，取字典序最大（=最新）的一个。"""
+    scans_dir = target / ".gloscope" / "scans"
+    run_dirs = [d for d in scans_dir.iterdir() if d.is_dir()] if scans_dir.is_dir() else []
+    if not run_dirs:
+        raise FileNotFoundError(f"{scans_dir} 下没有任何扫描产出，gloscope-scan 可能未成功运行")
+    latest = max(run_dirs, key=lambda d: d.name)
+    findings_path = latest / "findings.jsonl"
+    if not findings_path.is_file():
+        raise FileNotFoundError(f"{findings_path} 不存在")
+    return findings_path
 
 
 def materialize_fixture(dest: Path) -> Path:
@@ -40,9 +95,12 @@ def run_eval(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="run_eval", description="GloScope 四指标评测")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--report", help="离线：对已有 scan 报告计算指标")
-    mode.add_argument("--live", action="store_true", help="在线：物化靶场并跑完整扫描")
-    parser.add_argument("--target", help="live 模式的目标仓库（默认物化 evals/fixtures/tiny_app）")
-    parser.add_argument("--config", help="TOML 配置路径（live 模式需要）")
+    mode.add_argument("--live", action="store_true", help="在线（legacy Python 栈）：物化靶场并跑完整扫描")
+    mode.add_argument("--rust-scan", action="store_true",
+                      help="在线（新 Rust/Tauri 栈）：headless gloscope-scan + 适配器")
+    parser.add_argument("--target", help="live/rust-scan 模式的目标仓库（默认物化 evals/fixtures/tiny_app）")
+    parser.add_argument("--config", help="TOML 配置路径（live 模式需要；rust-scan 模式可选，"
+                        "对应 gloscope-scan 的 --config/GLOSCOPE_HOME 覆盖）")
     parser.add_argument("--ground-truth", default=str(REPO_ROOT / "evals" / "ground_truth.json"))
     parser.add_argument("--output-dir", default=None, help="live 模式报告目录（默认 evals/results/）")
     parser.add_argument("--skip-triage", action="store_true")
@@ -51,12 +109,33 @@ def run_eval(argv: list[str] | None = None) -> int:
     parser.add_argument("--semgrep-path", default="semgrep",
                         help="semgrep 可执行文件路径（如 venv 内的 semgrep）")
     parser.add_argument("--codex-path", default="codex", help="codex 可执行文件路径")
+    parser.add_argument("--gloscope-scan-path",
+                        help="rust-scan 模式：gloscope-scan 二进制路径（默认按 cargo target 布局猜测）")
     args = parser.parse_args(argv)
 
     ground_truth = load_ground_truth(args.ground_truth)
 
     if args.report:
         report = report_from_json(Path(args.report).read_text(encoding="utf-8"))
+    elif args.rust_scan:
+        if args.target:
+            target = Path(args.target).resolve()
+        else:
+            target = materialize_fixture(Path(tempfile.mkdtemp(prefix="gloscope-eval-"))).resolve()
+            print(f"已物化靶场 tiny_app → {target}")
+        gloscope_scan_path = resolve_gloscope_scan_path(args.gloscope_scan_path)
+        rc = run_rust_scan(gloscope_scan_path, target, args.config)
+        if rc != 0:
+            return rc
+        findings_path = find_latest_findings_jsonl(target)
+        report_dict = build_report(findings_path, str(target))
+        out_dir = Path(args.output_dir or str(REPO_ROOT / "evals" / "results"))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        report_json_path = out_dir / "report.json"
+        report_json_path.write_text(
+            json.dumps(report_dict, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        report = report_from_json(report_json_path.read_text(encoding="utf-8"))
     else:
         if args.target:
             target = Path(args.target)

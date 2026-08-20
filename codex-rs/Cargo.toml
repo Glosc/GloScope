@@ -56,6 +56,7 @@ members = [
     "ext/extension-api",
     "ext/gloscope-tools",
     "gloscope-config",
+    "gloscope-scan",
     "ext/goal",
     "ext/git-attribution",
     "ext/guardian",
