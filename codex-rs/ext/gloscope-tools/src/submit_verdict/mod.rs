@@ -367,21 +367,26 @@ pub(crate) struct SubmitVerdictTool {
     /// that `supports_parallel_tool_calls` is true, real usage is concurrent
     /// too) raced on that one shared real path.
     home_override: Option<PathBuf>,
-    /// Generated once per tool instance (i.e. once per `tools()` construction
-    /// — in practice once per thread), so every `submit_verdict` call in one
-    /// scan appends to the same `findings.jsonl` run directory.
+    /// Stable for the lifetime of the owning thread (see [`RunId`] and
+    /// `GloscopeToolsExtension::tools()`), so every `submit_verdict` call in
+    /// one scan appends to the same `findings.jsonl` run directory. `tools()`
+    /// is actually invoked once per sampling *step*, not once per thread —
+    /// constructing a fresh id here on every call fragmented one scan across
+    /// many single-finding run directories.
     run_id: String,
 }
 
 impl SubmitVerdictTool {
-    pub(crate) fn new() -> Self {
+    /// Used by `GloscopeToolsExtension::tools()` with a run id resolved once
+    /// per thread via the thread-scoped `ExtensionData` store.
+    pub(crate) fn with_run_id(run_id: String) -> Self {
         Self {
             codex_path_override: None,
             timeout: Duration::from_secs(600),
             runner: default_runner(),
             version: Mutex::new(None),
             home_override: None,
-            run_id: generate_run_id(),
+            run_id,
         }
     }
 
@@ -592,11 +597,11 @@ impl SubmitVerdictTool {
     }
 }
 
-/// One id per tool instance (i.e. per scan session), so every
-/// `submit_verdict` call within that session appends to the same run
+/// One id per thread (see [`crate::extension::GloscopeToolsExtension::tools`]),
+/// so every `submit_verdict` call within that scan appends to the same run
 /// directory. Millisecond epoch timestamp is unique enough for this purpose
 /// and sorts chronologically as a directory name.
-fn generate_run_id() -> String {
+pub(crate) fn generate_run_id() -> String {
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())

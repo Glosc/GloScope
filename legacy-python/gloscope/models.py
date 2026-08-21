@@ -42,6 +42,11 @@ VULN_CATEGORIES: dict[str, tuple[str, tuple[str, ...]]] = {
 CWE_TO_CATEGORY: dict[str, str] = {
     cwe: category for category, (cwe, _) in VULN_CATEGORIES.items()
 }
+# CWE-95（Eval Injection）是 CWE-94（Code Injection，即 code_injection 类别）的更具体
+# 子类——验证层（submit_verdict）对自行发现的候选（非 run_semgrep 产出）会自由选用更精确
+# 的 CWE/category 文本（如 "CWE-95"/"code_execution"），不受 VULN_CATEGORIES 约束，CVE
+# 回放实测中观察到过。这里只补充 CWE 反查别名，不新增类别、不改 fragments 推断。
+CWE_TO_CATEGORY["CWE-95"] = "code_injection"
 
 
 def normalize_cwe(raw: object) -> str | None:

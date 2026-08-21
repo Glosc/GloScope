@@ -53,13 +53,15 @@ def load_findings(findings_path: Path) -> list[dict]:
     return findings
 
 
-def build_report(findings_path: Path, target: str) -> dict:
+def build_report(findings_path: Path | None, target: str) -> dict:
+    """`findings_path=None` 表示扫描跑完但没有任何候选被验证过（semgrep 零候选，
+    或 triage 全部 drop）——一份合法的"零 finding"报告，不是错误。"""
     return {
         "target": target,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "truncated": 0,
         "stats": {},
-        "findings": load_findings(findings_path),
+        "findings": load_findings(findings_path) if findings_path is not None else [],
     }
 
 

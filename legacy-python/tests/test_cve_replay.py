@@ -9,12 +9,14 @@ from pathlib import Path
 
 import pytest
 
+import evals.cve_replay as cve_replay
 from evals.cve_replay import (
     CveCase,
     checkout_version,
     evaluate_replay,
     fetch_fix,
     load_cases,
+    run_case,
 )
 from gloscope.models import Candidate, Finding, ScanReport, TriageResult, Verification
 
@@ -96,6 +98,43 @@ def test_fetch_fix_uses_depth2_and_returns_changed_files(tmp_path):
     fetch = next(c for c in calls if c[0][1] == "fetch")
     assert fetch[0][2:4] == ["--depth", "2"]  # 深度 2 → fix + parent
     assert CASE.fix_commit in fetch[0]
+
+
+def test_run_case_rust_scan_path_uses_gloscope_scan_not_cli_main(tmp_path, monkeypatch):
+    """--rust-scan 分支必须走 run_rust_scan + 适配器，绝不能落到 legacy cli_main。"""
+    calls: list[str] = []
+
+    monkeypatch.setattr(cve_replay, "fetch_fix", lambda repo, commit, dest, git=None: [CASE.file])
+    monkeypatch.setattr(cve_replay, "checkout_version", lambda dest, which, git=None: calls.append(which))
+
+    def fake_cli_main(argv):
+        raise AssertionError("rust_scan=True 不应调用 legacy cli_main")
+
+    monkeypatch.setattr(cve_replay, "cli_main", fake_cli_main)
+
+    def fake_run_rust_scan(gloscope_scan_path, repo_dir, gloscope_config, paths=None):
+        calls.append(("run_rust_scan", paths))
+        assert paths == [CASE.file]
+        return 0
+
+    monkeypatch.setattr(cve_replay, "run_rust_scan", fake_run_rust_scan)
+    monkeypatch.setattr(
+        cve_replay, "find_latest_findings_jsonl",
+        lambda repo_dir, min_run_id=None: tmp_path / "findings.jsonl",
+    )
+
+    def fake_build_report(findings_path, target):
+        return {"target": target, "created_at": "", "truncated": 0, "stats": {}, "findings": []}
+
+    monkeypatch.setattr(cve_replay, "build_report", fake_build_report)
+
+    result = run_case(
+        CASE, config=None, out_dir=tmp_path / "out",
+        rust_scan=True, gloscope_scan_path=Path("fake-gloscope-scan"),
+    )
+    assert result.error is None
+    assert ("run_rust_scan", [CASE.file]) in calls
+    assert calls.count("parent") == 1 and calls.count("fix") == 1
 
 
 def test_checkout_version_selects_parent_or_fix(tmp_path):

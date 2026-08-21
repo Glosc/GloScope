@@ -72,6 +72,15 @@ pub struct Cli {
     /// `<target>/.gloscope/scans/<run-id>/findings.jsonl` regardless).
     #[arg(long)]
     pub output_dir: Option<PathBuf>,
+
+    /// Optional comma-separated list of files (relative to `--target`) to
+    /// restrict the scan to, mirroring `legacy-python/gloscope/cli.py`'s
+    /// `--paths` (which restricts the semgrep subprocess's target file
+    /// list — see `semgrep_runner.py`). Used by `evals/cve_replay.py` to
+    /// scope a scan to just the file a CVE fix commit touched. Empty means
+    /// scan the whole repo.
+    #[arg(long, value_delimiter = ',')]
+    pub paths: Vec<String>,
 }
 
 struct RequestIdSequencer {
@@ -249,11 +258,22 @@ async fn start_thread(
     Ok(response.thread.id)
 }
 
-fn driving_prompt(target: &Path) -> String {
+fn driving_prompt(target: &Path, paths: &[String]) -> String {
+    let run_semgrep_step = if paths.is_empty() {
+        format!("1. Call `run_semgrep` with target=\"{}\" to generate candidate findings.\n", target.display())
+    } else {
+        let paths_list = paths.join(", ");
+        format!(
+            "1. Call `run_semgrep` with target=\"{}\" and paths=[{}] to generate candidate \
+             findings restricted to those files only.\n",
+            target.display(),
+            paths_list
+        )
+    };
     format!(
         "Scan the repository at `{}` for security vulnerabilities using the \
          available GloScope tools.\n\n\
-         1. Call `run_semgrep` with target=\"{}\" to generate candidate findings.\n\
+         {run_semgrep_step}\
          2. For every candidate returned, call `triage` to get a keep/drop \
          decision.\n\
          3. For every candidate `triage` decides to keep, call `submit_verdict` \
@@ -264,7 +284,6 @@ fn driving_prompt(target: &Path) -> String {
          5. Once every kept candidate has been verified, reply with exactly the \
          text `SCAN COMPLETE` and nothing else.",
         target.display(),
-        target.display()
     )
 }
 
@@ -272,13 +291,14 @@ async fn send_scan_turn(
     client: &InProcessAppServerClient,
     thread_id: &str,
     target: &Path,
+    paths: &[String],
     request_ids: &mut RequestIdSequencer,
 ) -> anyhow::Result<String> {
     let request_id = request_ids.next();
     let params = TurnStartParams {
         thread_id: thread_id.to_string(),
         input: vec![UserInput::Text {
-            text: driving_prompt(target),
+            text: driving_prompt(target, paths),
             text_elements: Vec::new(),
         }],
         ..Default::default()
@@ -342,6 +362,7 @@ pub async fn run_main(cli: Cli, _arg0_paths: Arg0DispatchPaths) -> anyhow::Resul
 
     let gloscope_config = codex_gloscope_config::load_config()
         .map_err(|err| anyhow::anyhow!("failed to load GloScope config: {err}"))?;
+    let paths = cli.paths;
 
     let handle = std::thread::Builder::new()
         .name("gloscope-scan-core".to_string())
@@ -355,7 +376,7 @@ pub async fn run_main(cli: Cli, _arg0_paths: Arg0DispatchPaths) -> anyhow::Resul
                     ));
                 }
             };
-            rt.block_on(run_scan(gloscope_config, target))
+            rt.block_on(run_scan(gloscope_config, target, paths))
         })?;
 
     match handle.join() {
@@ -364,16 +385,21 @@ pub async fn run_main(cli: Cli, _arg0_paths: Arg0DispatchPaths) -> anyhow::Resul
     }
 }
 
-async fn run_scan(gloscope_config: GloscopeConfig, target: PathBuf) -> anyhow::Result<()> {
+async fn run_scan(
+    gloscope_config: GloscopeConfig,
+    target: PathBuf,
+    paths: Vec<String>,
+) -> anyhow::Result<()> {
     let codex_home = gloscope_codex_home()?;
     let (config, cli_overrides) = build_config(&gloscope_config, codex_home, &target).await?;
     let client = start_app_server(config.clone(), cli_overrides).await?;
     let mut request_ids = RequestIdSequencer::new();
     let thread_id = start_thread(&client, &config, &mut request_ids).await?;
-    let turn_id = send_scan_turn(&client, &thread_id, &target, &mut request_ids).await?;
+    let turn_id = send_scan_turn(&client, &thread_id, &target, &paths, &mut request_ids).await?;
 
     let mut client = client;
     let mut error_seen = false;
+    let mut last_error: Option<String> = None;
     loop {
         let Some(event) = client.next_event().await else {
             break;
@@ -391,6 +417,7 @@ async fn run_scan(gloscope_config: GloscopeConfig, target: PathBuf) -> anyhow::R
                         && !payload.will_retry =>
                 {
                     tracing::warn!("turn error: {:?}", payload.error);
+                    last_error = Some(format!("{:?}", payload.error));
                     error_seen = true;
                 }
                 ServerNotification::TurnCompleted(payload)
@@ -417,7 +444,13 @@ async fn run_scan(gloscope_config: GloscopeConfig, target: PathBuf) -> anyhow::R
     }
 
     if error_seen {
-        anyhow::bail!("scan turn did not complete successfully");
+        match last_error {
+            Some(detail) => anyhow::bail!("scan turn did not complete successfully: {detail}"),
+            None => anyhow::bail!(
+                "scan turn did not complete successfully (no error notification observed; \
+                 turn status was Failed/Interrupted, or a server request was rejected)"
+            ),
+        }
     }
     Ok(())
 }

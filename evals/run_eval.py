@@ -62,25 +62,44 @@ def resolve_gloscope_scan_path(explicit: str | None) -> Path:
     )
 
 
-def run_rust_scan(gloscope_scan_path: Path, target: Path, gloscope_config: str | None) -> int:
+def run_rust_scan(
+    gloscope_scan_path: Path,
+    target: Path,
+    gloscope_config: str | None,
+    paths: list[str] | None = None,
+) -> int:
     argv = [str(gloscope_scan_path), "--target", str(target)]
     if gloscope_config:
         argv += ["--config", gloscope_config]
+    if paths:
+        argv += ["--paths", ",".join(paths)]
     proc = subprocess.run(argv, shell=False)
     return proc.returncode
 
 
-def find_latest_findings_jsonl(target: Path) -> Path:
+def find_latest_findings_jsonl(target: Path, min_run_id: str | None = None) -> Path | None:
     """`gloscope-scan` 把 findings 写到 `<target>/.gloscope/scans/<run_id>/
-    findings.jsonl`；run_id 是毫秒时间戳目录名，取字典序最大（=最新）的一个。"""
+    findings.jsonl`；run_id 是毫秒时间戳目录名，取字典序最大（=最新）的一个。
+
+    返回 None（而不是报错）当扫描确实跑完（调用方已经检查过 rc == 0）但没有任何
+    候选被 `submit_verdict` 验证过——`.gloscope/scans/` 目录本身只在第一次
+    `submit_verdict` 调用时才被创建，所以"semgrep 零候选 / triage 全部 drop"这种
+    合法的"干净"结果，天然就是目录不存在，不是扫描失败。
+
+    `min_run_id`（可选）过滤掉早于它的 run 目录：当同一个 `target` 被扫描多次
+    （如 `cve_replay.py` 对同一个 repo_dir 先扫 parent 再扫 fix），"取字典序最大"
+    单独使用会在本次扫描零候选时，把上一次扫描留下的旧目录误当成本次结果——
+    调用方在发起扫描前先记录一个时间戳字符串传进来，即可排除这种情况。"""
     scans_dir = target / ".gloscope" / "scans"
     run_dirs = [d for d in scans_dir.iterdir() if d.is_dir()] if scans_dir.is_dir() else []
+    if min_run_id is not None:
+        run_dirs = [d for d in run_dirs if d.name >= min_run_id]
     if not run_dirs:
-        raise FileNotFoundError(f"{scans_dir} 下没有任何扫描产出，gloscope-scan 可能未成功运行")
+        return None
     latest = max(run_dirs, key=lambda d: d.name)
     findings_path = latest / "findings.jsonl"
     if not findings_path.is_file():
-        raise FileNotFoundError(f"{findings_path} 不存在")
+        return None
     return findings_path
 
 
